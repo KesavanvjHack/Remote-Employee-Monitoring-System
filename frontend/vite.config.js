@@ -1,0 +1,63 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { nodePolyfills } from 'vite-plugin-node-polyfills'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [
+    react(), 
+    tailwindcss(),
+    nodePolyfills({
+      // Whether to polyfill `node:` protocol imports.
+      protocolImports: true,
+      // Specifically include the polyfills needed for simple-peer
+      include: ['events', 'util', 'buffer', 'process', 'stream'],
+      globals: {
+        Buffer: true,
+        global: true,
+        process: true,
+      },
+    })
+  ],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      },
+    },
+  },
+  resolve: {
+    alias: {
+      'html2canvas': 'html2canvas/dist/html2canvas.esm.js',
+    }
+  },
+  optimizeDeps: {
+    include: ['html2canvas']
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/') || id.includes('node_modules/react-router-dom/')) {
+            return 'react-vendor';
+          }
+          if (id.includes('node_modules/recharts/')) {
+            return 'chart-vendor';
+          }
+          if (id.includes('node_modules/@heroicons/') || id.includes('node_modules/@headlessui/')) {
+            return 'ui-vendor';
+          }
+          if (id.includes('node_modules/html2canvas/') || id.includes('node_modules/date-fns/')) {
+            return 'utils-vendor';
+          }
+        }
+      }
+    }
+  }
+})
