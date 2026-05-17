@@ -64,21 +64,54 @@ class RequestOTPView(APIView):
         OTPRecord.objects.create(user_email=email, otp_code=otp_code)
 
         # Send Email (Console backend will print this)
-        send_mail(
-            'Your REMS Verification Code',
-            f'Your OTP code is: {otp_code}',
-            settings.DEFAULT_FROM_EMAIL if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'noreply@rems.com',
-            [email],
-            fail_silently=False,
-        )
+        try:
+            from_email = f"REMS Security <{settings.DEFAULT_FROM_EMAIL}>" if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'REMS Security <noreply@rems.com>'
+            subject = f"[REMS Security] Your Verification Code: {otp_code}"
+            
+            html_message = f"""
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <span style="font-size: 24px; font-weight: 800; color: #6366f1; letter-spacing: 0.05em;">REMS SECURITY</span>
+                </div>
+                <hr style="border: 0; border-top: 1px solid #f1f5f9; margin-bottom: 25px;"/>
+                <h3 style="color: #0f172a; margin-top: 0; font-weight: 700; font-size: 18px; text-align: center;">One-Time Verification Code</h3>
+                <p style="font-size: 14px; color: #475569; line-height: 1.6; text-align: center; margin-bottom: 30px;">
+                    Use the secure verification code below to complete your REMS sign-in process.
+                </p>
+                <div style="background-color: #0f172a; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; font-family: monospace; font-size: 32px; font-weight: bold; color: #38bdf8; letter-spacing: 0.15em;">
+                    {otp_code}
+                </div>
+                <p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 25px; line-height: 1.5;">
+                    This code is strictly confidential and will expire in 10 minutes.<br/>
+                    If you did not request this, please contact your administrator.
+                </p>
+            </div>
+            """
+            
+            text_message = f"Your REMS Verification Code is: {otp_code}\n\nThis code will expire in 10 minutes."
+            
+            send_mail(
+                subject,
+                text_message,
+                from_email,
+                [email],
+                fail_silently=False,
+                html_message=html_message
+            )
+        except Exception as mail_err:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to send login OTP email to {email}: {mail_err}")
+            # Also log to standard output for ease of local testing
+            print(f"\n[ALERT] Real-time SMTP dispatch failed: {mail_err}")
+            print(f"OTP code printed to console fallback: {otp_code}\n")
 
         # Determine if user exists for frontend logic
         user_exists = User.objects.filter(email=email).exists()
         
         return Response({
             'detail': 'OTP sent successfully.',
-            'user_exists': user_exists,
-            'otp': otp_code
+            'user_exists': user_exists
         })
 
 class VerifyOTPView(APIView):
@@ -258,6 +291,186 @@ class ChangePasswordView(APIView):
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
         return Response({'detail': 'Password changed successfully.'})
+
+
+class ForgotPasswordView(APIView):
+    """Step 1 of Forgot Password: Request a verification code/OTP to reset password"""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'detail': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if user exists
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({'detail': 'User with this email does not exist.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not user.is_active:
+            return Response({'detail': 'Account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Generate 6-digit OTP
+        otp_code = f"{random.randint(100000, 999999)}"
+        
+        # Save to DB
+        OTPRecord.objects.create(user_email=email, otp_code=otp_code)
+
+        # Send Email
+        try:
+            from_email = f"REMS Recovery <{settings.DEFAULT_FROM_EMAIL}>" if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'REMS Recovery <noreply@rems.com>'
+            subject = f"[REMS Security] Password Reset Code: {otp_code}"
+            
+            html_message = f"""
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <span style="font-size: 24px; font-weight: 800; color: #ec4899; letter-spacing: 0.05em;">REMS RECOVERY</span>
+                </div>
+                <hr style="border: 0; border-top: 1px solid #f1f5f9; margin-bottom: 25px;"/>
+                <h3 style="color: #0f172a; margin-top: 0; font-weight: 700; font-size: 18px; text-align: center;">Password Reset Request</h3>
+                <p style="font-size: 14px; color: #475569; line-height: 1.6; text-align: center; margin-bottom: 30px;">
+                    We received a request to authorize a password reset for your account. Please use the secure code below:
+                </p>
+                <div style="background-color: #0f172a; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; font-family: monospace; font-size: 32px; font-weight: bold; color: #f472b6; letter-spacing: 0.15em;">
+                    {otp_code}
+                </div>
+                <p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 25px; line-height: 1.5;">
+                    This password reset verification code will expire in 10 minutes.<br/>
+                    If you did not make this request, you can safely ignore this email.
+                </p>
+            </div>
+            """
+            
+            text_message = f"Your REMS Password Reset Verification Code is: {otp_code}\n\nThis code will expire in 10 minutes."
+            
+            send_mail(
+                subject,
+                text_message,
+                from_email,
+                [email],
+                fail_silently=False,
+                html_message=html_message
+            )
+        except Exception as mail_err:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to send password reset OTP email to {email}: {mail_err}")
+            # Also log to standard output for ease of local testing
+            print(f"\n[ALERT] Real-time SMTP dispatch failed: {mail_err}")
+            print(f"Forgot Password Reset OTP code printed to console fallback: {otp_code}\n")
+
+        return Response({
+            'detail': 'Verification code sent to your email.'
+        })
+
+
+class ResetPasswordView(APIView):
+    """Step 2 of Forgot Password: Submit OTP and the new password to reset it"""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        otp_code = request.data.get('otp')
+        new_password = request.data.get('new_password')
+
+        if not all([email, otp_code, new_password]):
+            return Response({'detail': 'Email, OTP, and new password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not user.is_active:
+            return Response({'detail': 'Account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Verify OTP
+        record = OTPRecord.objects.filter(user_email=email, otp_code=otp_code, is_verified=False).first()
+        if not record:
+            return Response({'detail': 'Invalid or expired verification code.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check expiration (10 minutes)
+        if (timezone.now() - record.created_at).total_seconds() > 600:
+            return Response({'detail': 'Verification code expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+
+        # Clean up all OTPs for this email
+        OTPRecord.objects.filter(user_email=email).delete()
+
+        # Audit log
+        AuditService.log(user, 'update', f'Password reset completed via forgot password flow for {email}', request)
+
+        # 1. Send direct email to the Employee themselves showing their new password
+        try:
+            from_email = f"REMS Security <{settings.DEFAULT_FROM_EMAIL}>" if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'REMS Security <noreply@rems.com>'
+            subject = "[REMS Security] Password Reset Completed Successfully"
+            
+            html_message = f"""
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 550px; margin: auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <span style="font-size: 24px; font-weight: 800; color: #10b981; letter-spacing: 0.05em;">REMS SECURITY</span>
+                </div>
+                <hr style="border: 0; border-top: 1px solid #f1f5f9; margin-bottom: 25px;"/>
+                <h3 style="color: #0f172a; margin-top: 0; font-weight: 700; font-size: 18px; text-align: center;">Your Password Has Been Reset</h3>
+                <p style="font-size: 14px; color: #475569; line-height: 1.6; text-align: center;">
+                    Hello <strong>{user.full_name}</strong>, your account password has been successfully updated. Below is a copy of your new secure login password:
+                </p>
+                <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; padding: 15px; border-radius: 12px; text-align: center; margin: 20px 0; font-family: monospace; font-size: 20px; font-weight: bold; color: #0f172a;">
+                    {new_password}
+                </div>
+                <p style="font-size: 12px; color: #ef4444; font-weight: 600; text-align: center; margin-top: 20px;">
+                    Important Security Action: Please keep this email safe and do not share your credentials with anyone.
+                </p>
+                <p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 25px; line-height: 1.5;">
+                    If you did not initiate this change, please contact an administrator immediately.
+                </p>
+            </div>
+            """
+            
+            text_message = f"Hello {user.full_name},\n\nYour REMS account password has been reset successfully.\n\nYour new password is: {new_password}\n\nPlease keep this information secure."
+            
+            send_mail(
+                subject,
+                text_message,
+                from_email,
+                [user.email],
+                fail_silently=False,
+                html_message=html_message
+            )
+        except Exception as mail_err:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to send password confirmation email to {user.email}: {mail_err}")
+
+        # 2. Dispatch system notifications & emails to all Admins and Managers in the system
+        try:
+            from django.db.models import Q
+            recipients = User.objects.filter(
+                Q(role='admin') | Q(role='manager')
+            ).exclude(id=user.id).distinct()
+            
+            if recipients.exists():
+                title = "Security Alert: Employee Password Reset"
+                message = f"Employee {user.full_name} ({user.email}) has successfully reset their account password via the Forgot Password flow."
+                
+                # This automatically writes the database notification and generates email dispatches to superiors
+                NotificationService._send_notifications(
+                    sender=user,
+                    recipients_qs=recipients,
+                    title=title,
+                    message=message,
+                    notif_type="system"
+                )
+        except Exception as notif_err:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to dispatch password reset notifications to managers/admins: {notif_err}")
+
+        return Response({'detail': 'Password has been reset successfully. You can now log in.'})
 
 
 class MeView(APIView):
@@ -1759,6 +1972,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticated]
 
+    def perform_create(self, serializer):
+        project = serializer.save()
+        from .services import NotificationService
+        # Notify all active managers and employees about the new project
+        NotificationService.notify_all_active_users(
+            sender=self.request.user,
+            title="New Project Created",
+            message=f"A new project has been initiated: '{project.name}' (Client: {project.client_code or 'N/A'}). Details: {project.description or 'No description provided.'}",
+            notif_type="system"
+        )
+
 class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
@@ -1773,6 +1997,55 @@ class TaskViewSet(viewsets.ModelViewSet):
         elif user.role == "manager":
             return Task.objects.all()
         return Task.objects.filter(assigned_to=user)
+
+    def perform_create(self, serializer):
+        task = serializer.save(created_by=self.request.user)
+        if task.assigned_to:
+            from .services import NotificationService
+            NotificationService._send_notifications(
+                sender=self.request.user,
+                recipients_qs=[task.assigned_to],
+                title="New Task Assigned",
+                message=f"You have been assigned a new task: '{task.title}' under project '{task.project.name if task.project else 'General'}'. Due date: {task.due_date or 'N/A'}.",
+                notif_type="task"
+            )
+
+    def perform_update(self, serializer):
+        old_task = self.get_object()
+        old_assigned_to = old_task.assigned_to
+        old_status = old_task.status
+        task = serializer.save()
+        
+        from .services import NotificationService
+        # Notify if assignee has changed
+        if task.assigned_to and task.assigned_to != old_assigned_to:
+            NotificationService._send_notifications(
+                sender=self.request.user,
+                recipients_qs=[task.assigned_to],
+                title="Task Assigned to You",
+                message=f"Task '{task.title}' has been assigned to you. Project: '{task.project.name if task.project else 'General'}'. Due date: {task.due_date or 'N/A'}.",
+                notif_type="task"
+            )
+        # Notify if status has changed
+        elif task.status != old_status:
+            recipients = []
+            if self.request.user == task.assigned_to:
+                # Employee updated status, notify the creator
+                if task.created_by:
+                    recipients.append(task.created_by)
+            else:
+                # Manager/Admin updated status, notify the assignee
+                if task.assigned_to:
+                    recipients.append(task.assigned_to)
+            
+            if recipients:
+                NotificationService._send_notifications(
+                    sender=self.request.user,
+                    recipients_qs=recipients,
+                    title="Task Status Updated",
+                    message=f"Task '{task.title}' status changed from '{old_status}' to '{task.status}'.",
+                    notif_type="task"
+                )
 
 class AppUsageLogViewSet(viewsets.ModelViewSet):
     serializer_class = AppUsageLogSerializer

@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     LoginView, LogoutView, MeView, ChangePasswordView,
     RequestOTPView, VerifyOTPView, RegisterProfileView,
+    ForgotPasswordView, ResetPasswordView,
     UserViewSet, DepartmentViewSet,
     AttendanceViewSet, WorkSessionView, BreakSessionView,
     IdleView, SyncSessionView, RealTimeStatusView, TeamStatusView, TeamTimesheetView,
@@ -51,6 +52,8 @@ urlpatterns = [
     path('auth/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('auth/me/', MeView.as_view(), name='me'),
     path('auth/change-password/', ChangePasswordView.as_view(), name='change-password'),
+    path('auth/forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
+    path('auth/reset-password/', ResetPasswordView.as_view(), name='reset-password'),
 
     # Work Sessions (Module 5)
     path('sessions/work/', WorkSessionView.as_view(), name='work-sessions'),

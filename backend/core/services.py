@@ -33,8 +33,11 @@ def get_device_info(request):
 class NotificationService:
     @staticmethod
     def _send_notifications(sender, recipients_qs, title, message, notif_type):
-        """Internal helper: bulk-create notifications and broadcast over WebSocket."""
+        """Internal helper: bulk-create notifications, broadcast over WebSocket, and send email alerts."""
         from .models import Notification
+        from django.core.mail import send_mail
+        from django.conf import settings
+        
         notifications = [
             Notification(
                 recipient=recipient,
@@ -64,6 +67,48 @@ class NotificationService:
                             'sender_name': sender.full_name
                         }
                     )
+            
+            # Send an email notification for every created notification record
+            for notif in created:
+                try:
+                    subject = f"[REMS] {notif.title}"
+                    html_message = f"""
+                    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: auto; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);">
+                        <h2 style="color: #1e3a8a; margin-top: 0; font-weight: 700; font-size: 20px; letter-spacing: -0.025em;">REMS Notification Alert</h2>
+                        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin-bottom: 20px;"/>
+                        <p style="font-size: 15px; color: #334155; line-height: 1.6;">
+                            Hello <strong>{notif.recipient.first_name}</strong>,
+                        </p>
+                        <div style="background-color: #f8fafc; padding: 18px; border-left: 4px solid #3b82f6; border-radius: 6px; margin: 20px 0;">
+                            <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin-top: 0; margin-bottom: 8px;">
+                                {notif.title}
+                            </p>
+                            <p style="font-size: 14px; color: #475569; margin: 0; white-space: pre-wrap; line-height: 1.5;">
+                                {notif.message}
+                            </p>
+                        </div>
+                        <p style="font-size: 14px; color: #64748b; line-height: 1.6; margin-bottom: 25px;">
+                            <strong>Sent By:</strong> {sender.full_name} ({sender.role.upper()})<br/>
+                            <strong>Category:</strong> {notif.get_type_display()}
+                        </p>
+                        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin-top: 20px; margin-bottom: 20px;"/>
+                        <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0; line-height: 1.4;">
+                            This is an automated system email dispatched from the Remote Employee Monitoring System (REMS). Please do not reply directly to this mailbox.
+                        </p>
+                    </div>
+                    """
+                    text_message = f"Hello {notif.recipient.first_name},\n\nYou have received a new notification in REMS:\n\n{notif.title}\n\n{notif.message}\n\nSender: {sender.full_name} ({sender.role.upper()})\nType: {notif.get_type_display()}\n\n---\nThis is an automated system email from REMS."
+                    
+                    send_mail(
+                        subject=subject,
+                        message=text_message,
+                        from_email=settings.DEFAULT_FROM_EMAIL if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'noreply@rems.com',
+                        recipient_list=[notif.recipient.email],
+                        html_message=html_message,
+                        fail_silently=False,
+                    )
+                except Exception as mail_err:
+                    logger.error(f"Failed to send email notification to {notif.recipient.email}: {mail_err}")
         except Exception as e:
             logger.error(f"Notification processing failed: {e}")
 
