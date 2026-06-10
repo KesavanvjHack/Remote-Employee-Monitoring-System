@@ -47,9 +47,11 @@ api.interceptors.response.use(
           // Refresh token expired or invalid
           localStorage.removeItem('access_token');
           localStorage.removeItem('refresh_token');
+          localStorage.removeItem('rems_user_cache');
           window.location.href = '/login';
         }
       } else {
+        localStorage.removeItem('rems_user_cache');
         window.location.href = '/login';
       }
     }

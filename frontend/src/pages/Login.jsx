@@ -29,9 +29,9 @@ const Login = () => {
   // Redirect if already logged in
   useEffect(() => {
     if (user) {
-      if (user.role === 'admin') navigate('/admin');
-      else if (user.role === 'manager') navigate('/manager');
-      else navigate('/employee');
+      if (user.role === 'admin') navigate('/admin', { replace: true });
+      else if (user.role === 'manager') navigate('/manager', { replace: true });
+      else navigate('/employee', { replace: true });
     }
   }, [user, navigate]);
 
@@ -60,9 +60,9 @@ const Login = () => {
     try {
       // Step 2: Final Login with OTP
       const role = await login(email, password, otp);
-      if (role === 'admin') navigate('/admin');
-      else if (role === 'manager') navigate('/manager');
-      else navigate('/employee');
+      if (role === 'admin') navigate('/admin', { replace: true });
+      else if (role === 'manager') navigate('/manager', { replace: true });
+      else navigate('/employee', { replace: true });
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Invalid OTP. Please try again.');
     } finally {

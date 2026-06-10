@@ -197,70 +197,26 @@ class NotificationService:
 
 # ── Attendance Engine ──────────────────────────────────────────────────────────
 
+def get_user_policy(user):
+    """
+    Get the active attendance policy for a user's department,
+    falling back to the global active policy.
+    """
+    from core.models import AttendancePolicy
+    if not user:
+        return AttendancePolicy.objects.filter(is_active=True, department__isnull=True).first()
+    
+    policy = None
+    if hasattr(user, 'department') and user.department:
+        policy = AttendancePolicy.objects.filter(is_active=True, department=user.department).first()
+    if not policy:
+        policy = AttendancePolicy.objects.filter(is_active=True, department__isnull=True).first()
+    return policy
+
+
 class AttendanceService:
     """Core attendance engine. Status derived solely from time calculations."""
 
-    @staticmethod
-    def auto_checkout_all_active_sessions():
-        """
-        Global Shift Finalizer: Checks all open sessions against policies.
-        Called by management command (cron).
-        """
-        from .models import WorkSession, AttendancePolicy
-        import datetime
-
-        now = timezone.now()
-        active_sessions = WorkSession.objects.filter(end_time__isnull=True).select_related('attendance__user')
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
-        
-        if not policy: return 0
-
-        checkout_count = 0
-        for session in active_sessions:
-            user = session.attendance.user
-            if user.role == 'admin': continue # Admins stay logged in
-            
-            # Combine session date with policy shift end
-            tz = timezone.get_current_timezone()
-            shift_end_dt = timezone.make_aware(datetime.datetime.combine(session.attendance.date, policy.shift_end_time), tz)
-            if shift_end_dt < session.start_time: # Night shift handling
-                shift_end_dt += datetime.timedelta(days=1)
-
-            if now >= shift_end_dt:
-                # Trigger official checkout
-                WorkSessionService.stop_session(user, end_time=shift_end_dt)
-                checkout_count += 1
-        
-        return checkout_count
-
-    @staticmethod
-    def notify_upcoming_shifts():
-        """Sends reminders to employees 15 mins before shift."""
-        from .models import User, AttendancePolicy, Attendance
-        import datetime
-
-        now = timezone.localtime(timezone.now())
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
-        if not policy: return 0
-
-        # Calculate target alert window (15 mins before shift)
-        shift_time = policy.shift_start_time
-        alert_time = (datetime.datetime.combine(date.today(), shift_time) - datetime.timedelta(minutes=15)).time()
-        
-        # Only notify during the specific 15-min window to avoid spam
-        if now.time() < alert_time or now.time() > shift_time:
-            return 0
-
-        employees = User.objects.filter(role='employee', is_active=True)
-        notif_count = 0
-        for emp in employees:
-            # If no attendance record yet today, they are likely offline
-            if not Attendance.objects.filter(user=emp, date=date.today()).exists():
-                message = f"Reminder: Your shift starts at {shift_time.strftime('%I:%M %p')}. Please log in to start work."
-                NotificationService.notify_based_on_role(emp, "Upcoming Shift", message, "system")
-                notif_count += 1
-        
-        return notif_count
 
     @staticmethod
     @transaction.atomic
@@ -356,7 +312,7 @@ class AttendanceService:
         
         # 6. Shift Window Policy (Strictness Integration)
         try:
-            policy = AttendancePolicy.objects.filter(is_active=True).first()
+            policy = get_user_policy(attendance.user)
             present_hours = float(policy.present_hours) if policy else 8.0
             min_hours = float(policy.min_working_hours) if policy else 8.0
             half_day_hours = float(policy.half_day_hours) if policy else 4.0
@@ -365,9 +321,9 @@ class AttendanceService:
             # 6a. Define Shift Window for the specific attendance date
             att_date = attendance.date
             tz = timezone.get_current_timezone()
-            shift_start_dt = timezone.make_aware(datetime.datetime.combine(att_date, policy.shift_start_time), tz)
-            shift_end_dt = timezone.make_aware(datetime.datetime.combine(att_date, policy.shift_end_time), tz)
-            if shift_end_dt <= shift_start_dt: shift_end_dt += datetime.timedelta(days=1)
+            shift_start_dt = timezone.make_aware(datetime.combine(att_date, policy.shift_start_time), tz)
+            shift_end_dt = timezone.make_aware(datetime.combine(att_date, policy.shift_end_time), tz)
+            if shift_end_dt <= shift_start_dt: shift_end_dt += timedelta(days=1)
         except Exception:
             policy = None
             present_hours, min_hours, half_day_hours, idle_threshold_minutes = 8.0, 8.0, 4.0, 15
@@ -398,6 +354,7 @@ class AttendanceService:
 
         # 8. Status Determination (Based on Shift-Aware Net Hours)
         total_work_hours = net_shift_work_seconds / 3600
+        print(f"DEBUG RECALC: total_work_hours={total_work_hours}, present_hours={present_hours}, min_hours={min_hours}, half_day_hours={half_day_hours}")
         
         auto_remark = ""
         if attendance.status in (attendance.STATUS_ON_LEAVE, attendance.STATUS_HOLIDAY):
@@ -430,7 +387,9 @@ class AttendanceService:
         attendance.status = status
 
         # Only set automated remark if manager hasn't provided one
-        if not attendance.manager_remark or "Hours" in (attendance.manager_remark or "") or "No work" in (attendance.manager_remark or ""):
+        lower_remark = (attendance.manager_remark or "").lower()
+        is_auto_remark = not attendance.manager_remark or "hours" in lower_remark or "no work" in lower_remark or "insufficient work" in lower_remark or "below required" in lower_remark
+        if is_auto_remark:
             attendance.manager_remark = auto_remark
 
         # Flagging Logic
@@ -457,12 +416,7 @@ class AttendanceService:
         from .models import WorkSession, AttendancePolicy
         import datetime
         
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
-        if not policy:
-            return 0
-            
         now_local = timezone.localtime(timezone.now())
-        
         tz = timezone.get_current_timezone()
         
         # 1. Handle Past Days: Find ALL open sessions where attendance date < today
@@ -473,23 +427,34 @@ class AttendanceService:
         
         count = 0
         for session in past_open_sessions:
+            user = session.attendance.user
+            if user.role == 'admin':
+                continue
+            policy = get_user_policy(user)
+            if not policy:
+                continue
             # For past sessions, we close them at the shift_end_time of THAT SPECIFIC DAY
             session_date = session.attendance.date
             close_time = timezone.make_aware(datetime.datetime.combine(session_date, policy.shift_end_time), tz)
-            WorkSessionService.stop_session(session.attendance.user, end_time=close_time, is_auto=True, session=session)
+            WorkSessionService.stop_session(user, end_time=close_time, is_auto=True, session=session)
             count += 1
 
-        # 2. Handle Today: Find open sessions for today if shift end time has passed
-        shift_end_dt_today = timezone.make_aware(datetime.datetime.combine(now_local.date(), policy.shift_end_time), tz)
+        # 2. Handle Today: Find open sessions for today
+        today_open_sessions = WorkSession.objects.filter(
+            end_time__isnull=True,
+            attendance__date=now_local.date()
+        ).select_related('attendance__user')
         
-        if now_local >= shift_end_dt_today:
-            today_open_sessions = WorkSession.objects.filter(
-                end_time__isnull=True,
-                attendance__date=now_local.date()
-            ).select_related('attendance__user')
-            
-            for session in today_open_sessions:
-                WorkSessionService.stop_session(session.attendance.user, end_time=shift_end_dt_today, is_auto=True, session=session)
+        for session in today_open_sessions:
+            user = session.attendance.user
+            if user.role == 'admin':
+                continue
+            policy = get_user_policy(user)
+            if not policy:
+                continue
+            shift_end_dt_today = timezone.make_aware(datetime.datetime.combine(now_local.date(), policy.shift_end_time), tz)
+            if now_local >= shift_end_dt_today:
+                WorkSessionService.stop_session(user, end_time=shift_end_dt_today, is_auto=True, session=session)
                 count += 1
             
         return count
@@ -560,7 +525,7 @@ class WorkSessionService:
         from .models import WorkSession, Attendance, AttendancePolicy
         import datetime
 
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
+        policy = get_user_policy(user)
         now_local = timezone.localtime(timezone.now())
         
         # 1. Enforce shift start time constraint
@@ -631,7 +596,7 @@ class WorkSessionService:
         if user.role != 'admin':
             from .models import AttendancePolicy
             import datetime
-            policy = AttendancePolicy.objects.filter(is_active=True).first()
+            policy = get_user_policy(user)
             if policy:
                 # Use the date of the attendance record, not necessarily 'today'
                 # to handle sessions that were left open from previous days.
@@ -768,7 +733,7 @@ class IdleService:
         import datetime
 
         # 1. Enforce shift hours (Idle detection only during shift)
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
+        policy = get_user_policy(user)
         if policy:
             now_local = timezone.localtime(timezone.now())
             if now_local.time() < policy.shift_start_time or now_local.time() > policy.shift_end_time:

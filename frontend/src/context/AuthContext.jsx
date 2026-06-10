@@ -244,6 +244,8 @@ export const AuthProvider = ({ children }) => {
         logout();
       }
     } else {
+        localStorage.removeItem('rems_user_cache');
+        setUser(null);
         setLoading(false);
     }
     setLoading(false);

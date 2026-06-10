@@ -243,6 +243,35 @@ const TeamAttendance = () => {
                 .filter(record => new Date(record.date) <= new Date())
                 .map((record) => {
                   const todayStr = new Date().toISOString().split('T')[0];
+                  const now = new Date();
+                  const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+                  const istDate = new Date(istString);
+                  const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
+                  const [endHour, endMin] = (policy?.shift_end_time || '17:30').split(':').map(Number);
+                  const shiftEndMinutes = endHour * 60 + endMin;
+                  const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
+
+                  const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
+                  const shiftStartMinutes = startHour * 60 + startMin;
+                  const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
+
+                  const isCalculating = record.date === todayStr && 
+                                      isBeforeShiftEnd &&
+                                      record.status !== 'present' && 
+                                      record.status !== 'on_leave' && 
+                                      record.status !== 'holiday';
+                  
+                  let displayStatus = record.status;
+                  let isNotStarted = false;
+                  if (isCalculating) {
+                    if (isBeforeShiftStart && !record.first_login) {
+                      displayStatus = 'Not Started';
+                      isNotStarted = true;
+                    } else {
+                      displayStatus = 'calculating...';
+                    }
+                  }
+
                   return (
                     <tr key={record.id} className="hover:bg-slate-700/20 transition-colors">
                       <td className="px-3 py-4 font-medium text-slate-200 text-xs whitespace-nowrap">
@@ -264,8 +293,11 @@ const TeamAttendance = () => {
                         </span>
                       </td>
                       <td className="px-3 py-4 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest ${ATTENDANCE_COLORS[record.status] || 'bg-slate-500/10 text-slate-400'}`}>
-                          {record.status?.replace('_', ' ')}
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest ${
+                          isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20') :
+                          (ATTENDANCE_COLORS[record.status?.toLowerCase()] || 'bg-slate-500/10 text-slate-400')
+                        }`}>
+                          {displayStatus === 'on_leave' ? 'On Leave' : displayStatus === 'half_day' ? 'Half Day' : displayStatus?.replace('_', ' ')}
                         </span>
                       </td>
                       <td className="px-3 py-4 text-right text-emerald-400 font-mono text-xs">

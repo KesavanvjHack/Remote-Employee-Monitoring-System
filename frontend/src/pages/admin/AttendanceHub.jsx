@@ -409,12 +409,26 @@ const AttendanceHub = () => {
                 const shiftEndMinutes = endHour * 60 + endMin;
                 const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
 
+                const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
+                const shiftStartMinutes = startHour * 60 + startMin;
+                const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
+
                 const isCalculating = record.date === todayStr && 
                                     isBeforeShiftEnd &&
                                     record.status !== 'present' && 
                                     record.status !== 'on_leave' && 
                                     record.status !== 'holiday';
-                const displayStatus = isCalculating ? 'calculating...' : record.status;
+                
+                let displayStatus = record.status;
+                let isNotStarted = false;
+                if (isCalculating) {
+                  if (isBeforeShiftStart && !record.first_login) {
+                    displayStatus = 'Not Started';
+                    isNotStarted = true;
+                  } else {
+                    displayStatus = 'calculating...';
+                  }
+                }
                 const normalizedStatus = record.status?.toLowerCase();
                 
                 return (
@@ -439,7 +453,7 @@ const AttendanceHub = () => {
                     </td>
                     <td className="px-2 py-3 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center justify-center gap-1 w-max mx-auto
-                        ${isCalculating ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                        ${isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20') :
                           normalizedStatus === 'present' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
                           normalizedStatus === 'absent' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
                           normalizedStatus === 'half_day' || normalizedStatus === 'half day' ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' :

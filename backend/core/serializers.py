@@ -243,11 +243,11 @@ class AttendanceSerializer(serializers.ModelSerializer):
         Calculate time gap: Policy Goal - Intersection(Work, Shift Window).
         Ensures that 'Gap' reflects the overall daily requirement.
         """
-        from .models import AttendancePolicy
+        from core.services import get_user_policy
         import datetime
         from django.utils import timezone as django_timezone
         
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
+        policy = get_user_policy(obj.user)
         if not policy:
             return 0
             
@@ -306,13 +306,13 @@ class AttendanceSerializer(serializers.ModelSerializer):
         return last_ended.end_time.isoformat()
 
     def get_shift_start(self, obj):
-        from .models import AttendancePolicy
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
+        from core.services import get_user_policy
+        policy = get_user_policy(obj.user)
         return policy.shift_start_time.strftime('%I:%M %p') if policy else "09:30 AM"
 
     def get_shift_end(self, obj):
-        from .models import AttendancePolicy
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
+        from core.services import get_user_policy
+        policy = get_user_policy(obj.user)
         return policy.shift_end_time.strftime('%I:%M %p') if policy else "05:30 PM"
 
     def get_has_completed_session(self, obj):

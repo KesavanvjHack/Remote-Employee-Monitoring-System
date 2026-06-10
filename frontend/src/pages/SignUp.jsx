@@ -23,9 +23,9 @@ const SignUp = () => {
   // Redirect if already logged in
   useEffect(() => {
     if (user) {
-      if (user.role === 'admin') navigate('/admin');
-      else if (user.role === 'manager') navigate('/manager');
-      else navigate('/employee');
+      if (user.role === 'admin') navigate('/admin', { replace: true });
+      else if (user.role === 'manager') navigate('/manager', { replace: true });
+      else navigate('/employee', { replace: true });
     }
   }, [user, navigate]);
 

@@ -204,8 +204,22 @@ const AdminDashboard = () => {
                   const shiftEndMinutes = endHour * 60 + endMin;
                   const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
 
+                  const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
+                  const shiftStartMinutes = startHour * 60 + startMin;
+                  const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
+
                   const isCalculating = isBeforeShiftEnd && (leave.status || '').toLowerCase() === 'absent';
-                  const displayStatus = isCalculating ? 'CALCULATING...' : (leave.status || 'N/A').toUpperCase();
+                  
+                  let displayStatus = (leave.status || 'N/A').toUpperCase();
+                  let isNotStarted = false;
+                  if (isCalculating) {
+                    if (isBeforeShiftStart) {
+                      displayStatus = 'NOT STARTED';
+                      isNotStarted = true;
+                    } else {
+                      displayStatus = 'CALCULATING...';
+                    }
+                  }
 
                   return (
                     <tr key={leave.id} className="hover:bg-slate-700/10 transition-colors">
@@ -226,7 +240,7 @@ const AdminDashboard = () => {
                       <td className="px-6 py-4 max-w-[200px] truncate text-slate-400" title={leave.reason}>{leave.reason}</td>
                       <td className="px-6 py-4 text-center">
                         <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider border ${
-                          isCalculating ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                          isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20') :
                           (leave.status || '').toLowerCase() === 'on_leave' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' :
                           (leave.status || '').toLowerCase() === 'absent' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
                           'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'

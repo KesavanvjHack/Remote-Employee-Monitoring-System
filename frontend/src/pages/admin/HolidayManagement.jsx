@@ -324,14 +324,27 @@ const HolidayManagement = () => {
                       const shiftEndMinutes = endHour * 60 + endMin;
                       const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
 
+                      const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
+                      const shiftStartMinutes = startHour * 60 + startMin;
+                      const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
+
                       const isCalculating = isBeforeShiftEnd && 
                                           leave.status === 'absent';
                       
-                      const displayStatus = isCalculating ? 'CALCULATING...' : leave.status.toUpperCase();
+                      let displayStatus = leave.status.toUpperCase();
+                      let isNotStarted = false;
+                      if (isCalculating) {
+                        if (isBeforeShiftStart) {
+                          displayStatus = 'NOT STARTED';
+                          isNotStarted = true;
+                        } else {
+                          displayStatus = 'CALCULATING...';
+                        }
+                      }
 
                       return (
                         <span className={`px-2 py-1 rounded text-xs border ${
-                          isCalculating ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                          isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20') :
                           leave.status === 'on_leave' || leave.status === 'approved' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' :
                           leave.status === 'rejected' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
                           leave.status === 'cancelled' ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' :
