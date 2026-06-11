@@ -168,7 +168,7 @@ const MyAttendance = () => {
     let placeholderGap = 0;
     if (!holiday) {
       // Use present_hours from policy (fallback to 8h)
-      placeholderGap = (policy?.present_hours || policy?.min_working_hours || 8) * 3600;
+      placeholderGap = (policy?.min_working_hours || 8) * 3600;
     }
 
     return {

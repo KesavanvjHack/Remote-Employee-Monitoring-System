@@ -70,7 +70,7 @@ const AttendanceHub = () => {
         u.is_active !== false && !usersWithRecordToday.has(u.id)
       );
       
-      const targetSeconds = (policy?.present_hours || 8) * 3600;
+      const targetSeconds = (policy?.min_working_hours || 8) * 3600;
 
       const dummyRecords = missingUsers.map(u => ({
         id: `dummy_${u.id}_${todayStr}`,
