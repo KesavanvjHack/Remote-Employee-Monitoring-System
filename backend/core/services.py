@@ -214,6 +214,21 @@ def get_user_policy(user):
     return policy
 
 
+def get_user_shift_times(user, policy=None):
+    """
+    Get shift start and end times for a user.
+    Falls back to department/global policy shift start and end times if no active shift is assigned.
+    """
+    if not policy:
+        policy = get_user_policy(user)
+    if user and hasattr(user, 'shift') and user.shift and user.shift.is_active:
+        return user.shift.start_time, user.shift.end_time
+    if policy:
+        return policy.shift_start_time, policy.shift_end_time
+    from datetime import time
+    return time(9, 30), time(17, 30)
+
+
 class AttendanceService:
     """Core attendance engine. Status derived solely from time calculations."""
 
@@ -321,8 +336,9 @@ class AttendanceService:
             # 6a. Define Shift Window for the specific attendance date
             att_date = attendance.date
             tz = timezone.get_current_timezone()
-            shift_start_dt = timezone.make_aware(datetime.combine(att_date, policy.shift_start_time), tz)
-            shift_end_dt = timezone.make_aware(datetime.combine(att_date, policy.shift_end_time), tz)
+            s_time, e_time = get_user_shift_times(attendance.user, policy)
+            shift_start_dt = timezone.make_aware(datetime.combine(att_date, s_time), tz)
+            shift_end_dt = timezone.make_aware(datetime.combine(att_date, e_time), tz)
             if shift_end_dt <= shift_start_dt: shift_end_dt += timedelta(days=1)
         except Exception:
             policy = None
@@ -435,7 +451,10 @@ class AttendanceService:
                 continue
             # For past sessions, we close them at the shift_end_time of THAT SPECIFIC DAY
             session_date = session.attendance.date
-            close_time = timezone.make_aware(datetime.datetime.combine(session_date, policy.shift_end_time), tz)
+            s_time, e_time = get_user_shift_times(user, policy)
+            close_time = timezone.make_aware(datetime.datetime.combine(session_date, e_time), tz)
+            if s_time > e_time:
+                close_time += datetime.timedelta(days=1)
             WorkSessionService.stop_session(user, end_time=close_time, is_auto=True, session=session)
             count += 1
 
@@ -452,10 +471,14 @@ class AttendanceService:
             policy = get_user_policy(user)
             if not policy:
                 continue
-            shift_end_dt_today = timezone.make_aware(datetime.datetime.combine(now_local.date(), policy.shift_end_time), tz)
+            s_time, e_time = get_user_shift_times(user, policy)
+            shift_end_dt_today = timezone.make_aware(datetime.datetime.combine(now_local.date(), e_time), tz)
+            if s_time > e_time:
+                shift_end_dt_today += datetime.timedelta(days=1)
             if now_local >= shift_end_dt_today:
                 WorkSessionService.stop_session(user, end_time=shift_end_dt_today, is_auto=True, session=session)
                 count += 1
+
             
         return count
 
@@ -465,9 +488,8 @@ class AttendanceService:
         Notify employees 15 minutes before their shift starts.
         Deduplicates notifications to ensure only one alert per day per user.
         """
-        from .models import User, AttendancePolicy, Notification
+        from .models import User, Notification
         import datetime
-        from django.db.models import Q
         
         now_local = timezone.localtime(timezone.now())
         today = now_local.date()
@@ -476,41 +498,31 @@ class AttendanceService:
         window_start = now_local.time()
         window_end = (now_local + datetime.timedelta(minutes=15)).time()
         
-        # Find active policies
-        policies = AttendancePolicy.objects.filter(is_active=True)
+        users = User.objects.filter(is_active=True, role='employee').select_related('shift', 'department')
         
         notified_count = 0
-        for policy in policies:
-            # Check if policy shift_start falls within our window
-            if window_start <= policy.shift_start_time <= window_end:
-                # Find employees who haven't been notified today for an upcoming shift
-                # and haven't logged in yet today.
-                users = User.objects.filter(is_active=True, role='employee')
-                if policy.department:
-                    users = users.filter(department=policy.department)
-                
-                for user in users:
-                    # Logic 1: Has user already logged in today?
-                    from .models import Attendance
-                    if Attendance.objects.filter(user=user, date=today).exists():
-                        continue
-                        
-                    # Logic 2: Have we already sent an 'Upcoming Shift' notification today?
-                    already_notified = Notification.objects.filter(
-                        recipient=user,
-                        title="Shift Starting Soon",
-                        created_at__date=today
-                    ).exists()
+        for user in users:
+            s_time, _ = get_user_shift_times(user)
+            if window_start <= s_time <= window_end:
+                from .models import Attendance
+                if Attendance.objects.filter(user=user, date=today).exists():
+                    continue
                     
-                    if not already_notified:
-                        NotificationService._send_notifications(
-                            user, [user],
-                            "Shift Starting Soon",
-                            f"Reminder: Your shift starts at {policy.shift_start_time.strftime('%I:%M %p')}. Please log in.",
-                            "system"
-                        )
-                        notified_count += 1
-                        
+                already_notified = Notification.objects.filter(
+                    recipient=user,
+                    title="Shift Starting Soon",
+                    created_at__date=today
+                ).exists()
+                
+                if not already_notified:
+                    NotificationService._send_notifications(
+                        user, [user],
+                        "Shift Starting Soon",
+                        f"Reminder: Your shift starts at {s_time.strftime('%I:%M %p')}. Please log in.",
+                        "system"
+                    )
+                    notified_count += 1
+                    
         return notified_count
 
 
@@ -529,9 +541,21 @@ class WorkSessionService:
         now_local = timezone.localtime(timezone.now())
         
         # 1. Enforce shift start time constraint
-        if policy:
-            if now_local.time() < policy.shift_start_time:
-                raise ValueError(f"Shift has not started yet. You can start work after {policy.shift_start_time.strftime('%I:%M %p')}.")
+        s_time, e_time = get_user_shift_times(user, policy)
+        start_dt = now_local.replace(hour=s_time.hour, minute=s_time.minute, second=0, microsecond=0)
+        end_dt = now_local.replace(hour=e_time.hour, minute=e_time.minute, second=0, microsecond=0)
+        
+        is_within = False
+        if end_dt <= start_dt:
+            # Overnight shift
+            end_next = end_dt + datetime.timedelta(days=1)
+            start_yesterday = start_dt - datetime.timedelta(days=1)
+            is_within = (start_dt <= now_local <= end_next) or (start_yesterday <= now_local <= end_dt)
+        else:
+            is_within = start_dt <= now_local <= end_dt
+            
+        if not is_within:
+            raise ValueError(f"Shift has not started yet. Work is only allowed during shift hours.")
 
         attendance, _ = AttendanceService.get_or_create_today(user)
         # Sequence lock on parent attendance to prevent double-click creation races
@@ -601,7 +625,10 @@ class WorkSessionService:
                 # Use the date of the attendance record, not necessarily 'today'
                 # to handle sessions that were left open from previous days.
                 session_date = attendance.date
-                shift_end_dt = timezone.make_aware(datetime.datetime.combine(session_date, policy.shift_end_time))
+                s_time, e_time = get_user_shift_times(user, policy)
+                shift_end_dt = timezone.make_aware(datetime.datetime.combine(session_date, e_time))
+                if s_time > e_time:
+                    shift_end_dt += datetime.timedelta(days=1)
                 
                 if stop_time > shift_end_dt:
                     stop_time = shift_end_dt
@@ -734,11 +761,18 @@ class IdleService:
 
         # 1. Enforce shift hours (Idle detection only during shift)
         policy = get_user_policy(user)
-        if policy:
-            now_local = timezone.localtime(timezone.now())
-            if now_local.time() < policy.shift_start_time or now_local.time() > policy.shift_end_time:
-                # Outside shift hours — ignore idle detection request
-                return None, False
+        s_time, e_time = get_user_shift_times(user, policy)
+        now_local = timezone.localtime(timezone.now())
+        
+        # Handle overnight shifts
+        if s_time <= e_time:
+            within = s_time <= now_local.time() <= e_time
+        else:
+            within = now_local.time() >= s_time or now_local.time() <= e_time
+            
+        if not within:
+            # Outside shift hours — ignore idle detection request
+            return None, False
 
         attendance, _ = AttendanceService.get_or_create_today(user)
         open_session = WorkSession.objects.filter(
@@ -1182,6 +1216,7 @@ class PayrollPrepService:
         Returns a list of dicts suitable for CSV export via the ExportView.
         """
         from .models import User, Attendance, LeaveRequest, Expense
+        from .services import get_user_policy, get_user_shift_times
 
         start_date = date(year, month, 1)
         if month == 12:
@@ -1193,12 +1228,60 @@ class PayrollPrepService:
         users = User.objects.filter(is_active=True)
 
         for user in users:
-            # 1. Total Days Worked
-            present_days = Attendance.objects.filter(
+            # 1. Fetch all attendances for the range
+            attendances = Attendance.objects.filter(
                 user=user, 
-                date__range=[start_date, end_date],
-                status__in=[Attendance.STATUS_PRESENT, Attendance.STATUS_HALF_DAY]
-            ).count()
+                date__range=[start_date, end_date]
+            ).prefetch_related('work_sessions')
+
+            present_days = 0
+            total_regular_hours = 0.0
+            total_overtime_hours = 0.0
+            total_night_hours = 0.0
+            
+            base_earnings = 0.0
+            overtime_earnings = 0.0
+            night_diff_earnings = 0.0
+
+            for att in attendances:
+                if att.status in [Attendance.STATUS_PRESENT, Attendance.STATUS_HALF_DAY]:
+                    present_days += 1
+
+                # Calculate work hours for this attendance record
+                policy = get_user_policy(user)
+                base_rate = float(policy.base_hourly_rate) if policy else 20.00
+                ot_multiplier = float(policy.overtime_rate_multiplier) if policy else 1.50
+                night_multiplier = float(policy.night_differential_multiplier) if policy else 1.20
+                standard_hours = float(policy.min_working_hours) if policy else 8.00
+
+                # Check if it's a night shift
+                s_time, _ = get_user_shift_times(user, policy)
+                is_night_shift = False
+                if policy and 'night' in policy.name.lower():
+                    is_night_shift = True
+                elif user.shift and 'night' in user.shift.name.lower():
+                    is_night_shift = True
+                elif s_time.hour >= 18 or s_time.hour <= 4:
+                    is_night_shift = True
+
+                work_hours = att.effective_work_seconds / 3600.0
+                if work_hours > 0:
+                    reg_hours = min(work_hours, standard_hours)
+                    ot_hours = max(0.0, work_hours - standard_hours)
+
+                    total_regular_hours += reg_hours
+                    total_overtime_hours += ot_hours
+
+                    reg_pay = reg_hours * base_rate
+                    ot_pay = ot_hours * base_rate * ot_multiplier
+
+                    base_earnings += reg_pay
+                    overtime_earnings += ot_pay
+
+                    if is_night_shift:
+                        total_night_hours += work_hours
+                        diff_pay = work_hours * base_rate * (night_multiplier - 1.0)
+                        night_diff_earnings += diff_pay
 
             # 2. Approved Paid Leaves (Assuming all approved leaves are paid for simple calculation)
             approved_leaves = LeaveRequest.objects.filter(
@@ -1225,7 +1308,15 @@ class PayrollPrepService:
                 'payable_days': present_days + leave_days,
                 'present_days': present_days,
                 'paid_leave_days': leave_days,
-                'reimbursable_expenses': float(approved_expenses)
+                'regular_hours': round(total_regular_hours, 2),
+                'overtime_hours': round(total_overtime_hours, 2),
+                'night_hours': round(total_night_hours, 2),
+                'base_earnings': round(base_earnings, 2),
+                'overtime_earnings': round(overtime_earnings, 2),
+                'night_differential_earnings': round(night_diff_earnings, 2),
+                'reimbursable_expenses': float(approved_expenses),
+                'total_earnings': round(base_earnings + overtime_earnings + night_diff_earnings + float(approved_expenses), 2)
             })
 
         return payroll_data
+

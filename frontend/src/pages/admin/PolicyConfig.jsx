@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { AdjustmentsHorizontalIcon, CheckIcon } from '@heroicons/react/24/outline';
+
 const CustomTimePicker = ({ value, onChange }) => {
   const [hourStr, minStr] = (value || '09:00').split(':');
   const h24 = parseInt(hourStr, 10) || 0;
@@ -65,26 +66,62 @@ const CustomTimePicker = ({ value, onChange }) => {
 
 const PolicyConfig = () => {
   const [policy, setPolicy] = useState(null);
+  const [allPolicies, setAllPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [resetDate, setResetDate] = useState(new Date().toISOString().split('T')[0]);
   const [resetting, setResetting] = useState(false);
 
+  // New states for expanded reset tools
+  const [scope, setScope] = useState('all');
+  const [employeeId, setEmployeeId] = useState('');
+  const [rangeType, setRangeType] = useState('today');
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [employees, setEmployees] = useState([]);
+
   useEffect(() => {
-    fetchPolicy();
+    fetchData();
   }, []);
 
-  const fetchPolicy = async () => {
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      const res = await api.get('/policy/');
-      const policyData = res.data.results ? res.data.results : res.data;
-      if (policyData.length > 0) {
-        setPolicy(policyData[0]);
+      const [policyRes, employeesRes] = await Promise.all([
+        api.get('/policy/'),
+        api.get('/users/?role=employee&is_active=true')
+      ]);
+
+      const policyData = policyRes.data.results ? policyRes.data.results : policyRes.data;
+      setAllPolicies(policyData || []);
+
+      // Look for Morning Shift first, then Night Shift, then whatever is first
+      let activePolicy = policyData.find(p => p.name === 'Morning Shift') || 
+                         policyData.find(p => p.name === 'Night Shift') || 
+                         policyData[0];
+      if (activePolicy) {
+        setPolicy(activePolicy);
       } else {
-        toast.error('No active policy found');
+        // Fallback policy if none exists
+        setPolicy({
+          name: 'Morning Shift',
+          min_working_hours: 8.0,
+          present_hours: 8.0,
+          half_day_hours: 4.0,
+          idle_threshold_minutes: 15,
+          shift_start_time: '09:30:00',
+          shift_end_time: '17:30:00',
+          session_timeout_hours: 24,
+          base_hourly_rate: 20.00,
+          overtime_rate_multiplier: 1.50,
+          night_differential_multiplier: 1.20
+        });
       }
+
+      const employeeData = employeesRes.data.results || employeesRes.data;
+      setEmployees(employeeData || []);
     } catch (error) {
-      toast.error('Failed to load policy configuration');
+      toast.error('Failed to load configuration data');
     } finally {
       setLoading(false);
     }
@@ -94,8 +131,23 @@ const PolicyConfig = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      await api.put(`/policy/${policy.id}/`, policy);
+      let res;
+      if (policy.id) {
+        res = await api.put(`/policy/${policy.id}/`, policy);
+      } else {
+        res = await api.post(`/policy/`, policy);
+      }
       toast.success('Attendance Policy updated successfully');
+      const updatedPolicy = res.data;
+      setAllPolicies(prev => {
+        const index = prev.findIndex(p => p.name === updatedPolicy.name);
+        if (index !== -1) {
+          return prev.map(p => p.name === updatedPolicy.name ? updatedPolicy : p);
+        } else {
+          return [...prev, updatedPolicy];
+        }
+      });
+      setPolicy(updatedPolicy);
     } catch (error) {
       toast.error('Failed to update policy');
     } finally {
@@ -104,13 +156,45 @@ const PolicyConfig = () => {
   };
 
   const handleReset = async () => {
-    if (!window.confirm(`Are you sure you want to RESET all attendance sessions for ${resetDate}? This action cannot be undone.`)) {
+    if (scope === 'particular' && !employeeId) {
+      toast.error('Please select an employee');
+      return;
+    }
+
+    const employeeText = scope === 'all' 
+      ? 'ALL employees' 
+      : `employee ${employees.find(e => e.id === employeeId)?.full_name || employeeId}`;
+    
+    let timeframeText = '';
+    if (rangeType === 'today') {
+      timeframeText = `today (${resetDate})`;
+    } else if (rangeType === 'week') {
+      timeframeText = 'this week';
+    } else if (rangeType === 'custom') {
+      timeframeText = `from ${startDate} to ${endDate}`;
+    }
+
+    if (!window.confirm(`Are you sure you want to RESET attendance sessions for ${employeeText} for ${timeframeText}? This will permanently delete all work sessions, breaks, and idle logs. This action cannot be undone.`)) {
       return;
     }
     
     setResetting(true);
     try {
-      const res = await api.post('/policy/reset_day_sessions/', { date: resetDate });
+      const payload = {
+        scope,
+        range_type: rangeType,
+      };
+      if (scope === 'particular') {
+        payload.employee_id = employeeId;
+      }
+      if (rangeType === 'today') {
+        payload.date = resetDate;
+      } else if (rangeType === 'custom') {
+        payload.start_date = startDate;
+        payload.end_date = endDate;
+      }
+
+      const res = await api.post('/policy/reset_day_sessions/', payload);
       toast.success(res.data.message || 'Attendance sessions reset successfully');
     } catch (error) {
       toast.error(error.response?.data?.error || 'Failed to reset sessions');
@@ -119,7 +203,6 @@ const PolicyConfig = () => {
     }
   };
 
-  // Loading skeletons for a premium feel
   if (loading) {
     return (
       <div className="max-w-3xl space-y-6 page-fade-in">
@@ -142,20 +225,42 @@ const PolicyConfig = () => {
         <h1 className="text-2xl font-bold tracking-tight text-white">Global Attendance Policy</h1>
       </div>
 
-      <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-8">
+      <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-8 shadow-xl">
         <form onSubmit={handleSave} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
-              <label htmlFor="policyName" className="block text-sm font-medium text-slate-300 mb-2">Policy Name</label>
-              <input
-                type="text"
+              <label htmlFor="policyName" className="block text-sm font-medium text-slate-300 mb-2">Choose Shift (M/N)</label>
+              <select
                 id="policyName"
                 name="policy-name"
-                required
-                className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all outline-none"
                 value={policy.name}
-                onChange={(e) => setPolicy({ ...policy, name: e.target.value })}
-              />
+                onChange={(e) => {
+                  const newName = e.target.value;
+                  const matched = allPolicies.find(p => p.name === newName);
+                  if (matched) {
+                    setPolicy(matched);
+                  } else {
+                    // Create local placeholder before save
+                    setPolicy({
+                      name: newName,
+                      min_working_hours: 8.0,
+                      present_hours: 8.0,
+                      half_day_hours: 4.0,
+                      idle_threshold_minutes: 15,
+                      shift_start_time: newName === 'Night Shift' ? '19:30:00' : '09:30:00',
+                      shift_end_time: newName === 'Night Shift' ? '03:30:00' : '17:30:00',
+                      session_timeout_hours: 24,
+                      base_hourly_rate: 20.00,
+                      overtime_rate_multiplier: 1.50,
+                      night_differential_multiplier: 1.20
+                    });
+                  }
+                }}
+              >
+                <option value="Morning Shift">Morning Shift</option>
+                <option value="Night Shift">Night Shift</option>
+              </select>
             </div>
             
             <div>
@@ -252,6 +357,54 @@ const PolicyConfig = () => {
               />
               <p className="mt-2 text-xs text-slate-500">Users will be automatically logged out after {policy.session_timeout_hours || 24} hours of continuous session.</p>
             </div>
+
+            <div>
+              <label htmlFor="baseHourlyRate" className="block text-sm font-medium text-slate-300 mb-2">Base Hourly Rate ($)</label>
+              <input
+                type="number"
+                id="baseHourlyRate"
+                name="base-hourly-rate"
+                required
+                step="0.01"
+                min="0"
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
+                value={policy.base_hourly_rate !== undefined ? policy.base_hourly_rate : 20.00}
+                onChange={(e) => setPolicy({ ...policy, base_hourly_rate: parseFloat(e.target.value) })}
+                title="Standard base hourly rate used for payroll calculations"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="overtimeMultiplier" className="block text-sm font-medium text-slate-300 mb-2">Overtime Rate Multiplier (e.g., 1.5x)</label>
+              <input
+                type="number"
+                id="overtimeMultiplier"
+                name="overtime-multiplier"
+                required
+                step="0.01"
+                min="1.0"
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
+                value={policy.overtime_rate_multiplier !== undefined ? policy.overtime_rate_multiplier : 1.50}
+                onChange={(e) => setPolicy({ ...policy, overtime_rate_multiplier: parseFloat(e.target.value) })}
+                title="Multiplier applied to standard base hourly rate for hours exceeding standard daily limit"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="nightMultiplier" className="block text-sm font-medium text-slate-300 mb-2">Night Differential Multiplier (e.g., 1.2x)</label>
+              <input
+                type="number"
+                id="nightMultiplier"
+                name="night-multiplier"
+                required
+                step="0.01"
+                min="1.0"
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
+                value={policy.night_differential_multiplier !== undefined ? policy.night_differential_multiplier : 1.20}
+                onChange={(e) => setPolicy({ ...policy, night_differential_multiplier: parseFloat(e.target.value) })}
+                title="Multiplier applied to base rate for night shift differential hours"
+              />
+            </div>
           </div>
 
           <div className="pt-6 border-t border-slate-700/50 flex justify-end">
@@ -280,21 +433,97 @@ const PolicyConfig = () => {
         
         <p className="text-slate-400 text-sm mb-6 max-w-xl leading-relaxed">
           <span className="text-rose-400 font-bold uppercase text-[10px] tracking-widest block mb-1">Danger Zone</span>
-          Resetting attendance will permanently delete all work sessions, breaks, and idle logs for all users on the selected date. This action is irreversible and should only be used for data correction.
+          Resetting attendance will permanently delete all work sessions, breaks, and idle logs for the selected users and timeframe. This action is irreversible and should only be used for data correction.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-end gap-6">
-          <div className="flex-1 w-full max-w-xs">
-            <label htmlFor="resetDate" className="block text-sm font-medium text-slate-300 mb-2">Target Date</label>
-            <input
-              type="date"
-              id="resetDate"
-              name="reset-date"
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div>
+            <label htmlFor="resetScope" className="block text-sm font-medium text-slate-300 mb-2">Target Employees</label>
+            <select
+              id="resetScope"
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
               className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500/50 transition-all outline-none"
-              value={resetDate}
-              onChange={(e) => setResetDate(e.target.value)}
-            />
+            >
+              <option value="all">All Employees</option>
+              <option value="particular">Particular Employee</option>
+            </select>
           </div>
+
+          {scope === 'particular' && (
+            <div>
+              <label htmlFor="resetEmployee" className="block text-sm font-medium text-slate-300 mb-2">Select Employee</label>
+              <select
+                id="resetEmployee"
+                value={employeeId}
+                onChange={(e) => setEmployeeId(e.target.value)}
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500/50 transition-all outline-none"
+              >
+                <option value="">-- Choose Employee --</option>
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.full_name} ({emp.email})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="resetRange" className="block text-sm font-medium text-slate-300 mb-2">Timeframe</label>
+            <select
+              id="resetRange"
+              value={rangeType}
+              onChange={(e) => setRangeType(e.target.value)}
+              className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500/50 transition-all outline-none"
+            >
+              <option value="today">Today / Specific Date</option>
+              <option value="week">This Week</option>
+              <option value="custom">Custom Date Range</option>
+            </select>
+          </div>
+
+          {rangeType === 'today' && (
+            <div>
+              <label htmlFor="resetDate" className="block text-sm font-medium text-slate-300 mb-2">Target Date</label>
+              <input
+                type="date"
+                id="resetDate"
+                name="reset-date"
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500/50 transition-all outline-none"
+                value={resetDate}
+                onChange={(e) => setResetDate(e.target.value)}
+              />
+            </div>
+          )}
+
+          {rangeType === 'custom' && (
+            <div className="grid grid-cols-2 gap-4 col-span-1 md:col-span-2">
+              <div>
+                <label htmlFor="startDate" className="block text-sm font-medium text-slate-300 mb-2">Start Date</label>
+                <input
+                  type="date"
+                  id="startDate"
+                  className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500/50 transition-all outline-none"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="endDate" className="block text-sm font-medium text-slate-300 mb-2">End Date</label>
+                <input
+                  type="date"
+                  id="endDate"
+                  className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500/50 transition-all outline-none"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end mt-6">
           <button
             onClick={handleReset}
             disabled={resetting}
@@ -311,16 +540,15 @@ const PolicyConfig = () => {
             ) : (
               <>
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
-                Reset All Sessions
+                Reset Sessions
               </>
             )}
           </button>
         </div>
       </div>
     </div>
-
   );
 };
 

@@ -6,6 +6,18 @@ import { CalendarIcon, TrashIcon, ArrowDownTrayIcon, UsersIcon } from '@heroicon
 import { AuthContext } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
 
+const parseTime12hToMinutes = (time12h) => {
+  if (!time12h) return 0;
+  const match = time12h.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toUpperCase();
+  if (period === 'PM' && hours < 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+};
+
 const HolidayManagement = () => {
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -54,7 +66,10 @@ const HolidayManagement = () => {
         employee_role: att.user_role,
         leave_type: att.leave_type,
         reason: att.reason,
-        status: att.status
+        status: att.status,
+        shift_start: att.shift_start,
+        shift_end: att.shift_end,
+        shift_name: att.shift_name,
       }));
       setTodaysLeaves(mapped);
     } catch (error) {
@@ -71,6 +86,101 @@ const HolidayManagement = () => {
     } catch (error) {
       console.error('Failed to fetch users', error);
     }
+  };
+
+  const renderShiftLeavesTable = (title, leaves) => {
+    return (
+      <ResponsiveTable title={title}>
+        <table className="w-full text-left text-sm text-slate-300">
+          <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
+            <tr>
+              <th className="px-6 py-4 font-semibold">Name</th>
+              <th className="px-6 py-4 font-semibold">Role</th>
+              <th className="px-6 py-4 font-semibold">Leave Type</th>
+              <th className="px-6 py-4 font-semibold">Reason</th>
+              <th className="px-6 py-4 font-semibold">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-700/50">
+            {loadingLeaves ? (
+              [...Array(2)].map((_, i) => (
+                <tr key={i} className="h-16 skeleton-pulse">
+                  <td colSpan="5"></td>
+                </tr>
+              ))
+            ) : leaves.length === 0 ? (
+              <tr><td colSpan="5" className="px-6 py-8 text-center text-slate-500">No leaves logged for this shift.</td></tr>
+            ) : (
+              leaves.map((leave) => {
+                const now = new Date();
+                const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+                const istDate = new Date(istString);
+
+                const todayStr = istDate.toISOString().split('T')[0];
+                const [recYear, recMonth, recDay] = todayStr.split('-').map(Number);
+                
+                const shiftStartDate = new Date(recYear, recMonth - 1, recDay);
+                const startMin = parseTime12hToMinutes(leave.shift_start || '09:30 AM');
+                shiftStartDate.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
+
+                const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
+                const endMin = parseTime12hToMinutes(leave.shift_end || '05:30 PM');
+                shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+                if (endMin <= startMin) {
+                  shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+                }
+
+                const isBeforeShiftStart = istDate < shiftStartDate;
+                const isBeforeShiftEnd = istDate < shiftEndDate;
+
+                const isCalculating = isBeforeShiftEnd && 
+                                    leave.status === 'absent';
+                
+                let displayStatus = leave.status.toUpperCase();
+                let isNotStarted = false;
+                if (isCalculating) {
+                  if (isBeforeShiftStart) {
+                    displayStatus = 'NOT STARTED';
+                    isNotStarted = true;
+                  } else {
+                    displayStatus = 'CALCULATING...';
+                  }
+                }
+
+                return (
+                  <tr key={leave.id} className="hover:bg-slate-700/20 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="font-medium text-slate-200">{leave.employee_name || 'N/A'}</div>
+                      <div className="text-xs text-slate-500">{leave.employee_email || ''}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`capitalize px-2 py-1 rounded text-xs border ${
+                        leave.employee_role === 'manager' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : 'bg-slate-900 text-slate-300 border-slate-700'
+                      }`}>
+                        {leave.employee_role || 'Employee'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">{leave.leave_type === '-' ? '-' : (leave.leave_type || 'General')}</td>
+                    <td className="px-6 py-4 max-w-[200px] truncate" title={leave.reason}>{leave.reason}</td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded text-xs border ${
+                        isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20') :
+                        leave.status === 'on_leave' || leave.status === 'approved' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' :
+                        leave.status === 'rejected' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                        leave.status === 'cancelled' ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' :
+                        'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                      }`}>
+                        {displayStatus}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </ResponsiveTable>
+    );
   };
 
   const handleAddHoliday = async (e) => {
@@ -124,11 +234,14 @@ const HolidayManagement = () => {
         export_format: exportFormat
       });
 
-      if (exportCategory !== 'all') {
+      if (exportCategory !== 'all' && exportCategory !== 'morning' && exportCategory !== 'night') {
         params.append('category', exportCategory);
       }
       if (exportCategory === 'particular_employee' && exportUserId) {
         params.append('user_id', exportUserId);
+      }
+      if (exportCategory === 'morning' || exportCategory === 'night') {
+        params.append('shift', exportCategory);
       }
       if (exportFromDate) params.append('from_date', exportFromDate);
       if (exportToDate) params.append('to_date', exportToDate);
@@ -186,6 +299,8 @@ const HolidayManagement = () => {
               <option value="all">All (Everyone)</option>
               <option value="employees">Employees Only</option>
               <option value="managers">Managers Only</option>
+              <option value="morning">Morning Shift</option>
+              <option value="night">Night Shift</option>
               <option value="particular_employee">Particular Employee</option>
             </select>
           </div>
@@ -277,90 +392,14 @@ const HolidayManagement = () => {
         </div>
       </div>
 
-      {/* Today's Leaves Section (MOVED TO MIDDLE) */}
-      <ResponsiveTable title="Today's Leaves">
-        <table className="w-full text-left text-sm text-slate-300">
-          <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
-            <tr>
-              <th className="px-6 py-4 font-semibold">Name</th>
-              <th className="px-6 py-4 font-semibold">Role</th>
-              <th className="px-6 py-4 font-semibold">Leave Type</th>
-              <th className="px-6 py-4 font-semibold">Reason</th>
-              <th className="px-6 py-4 font-semibold">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-700/50">
-            {loadingLeaves ? (
-              [...Array(3)].map((_, i) => (
-                <tr key={i} className="h-16 skeleton-pulse">
-                  <td colSpan="5"></td>
-                </tr>
-              ))
-            ) : todaysLeaves.length === 0 ? (
-              <tr><td colSpan="5" className="px-6 py-8 text-center text-slate-500">No leaves logged for today.</td></tr>
-            ) : (
-              todaysLeaves.map((leave) => (
-                <tr key={leave.id} className="hover:bg-slate-700/20 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="font-medium text-slate-200">{leave.employee_name || 'N/A'}</div>
-                    <div className="text-xs text-slate-500">{leave.employee_email || ''}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`capitalize px-2 py-1 rounded text-xs border ${
-                      leave.employee_role === 'manager' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : 'bg-slate-900 text-slate-300 border-slate-700'
-                    }`}>
-                      {leave.employee_role || 'Employee'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">{leave.leave_type === '-' ? '-' : (leave.leave_type || 'General')}</td>
-                  <td className="px-6 py-4 max-w-[200px] truncate" title={leave.reason}>{leave.reason}</td>
-                  <td className="px-6 py-4">
-                    {(() => {
-                      const now = new Date();
-                      const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-                      const istDate = new Date(istString);
-                      const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
-                      const [endHour, endMin] = (policy?.shift_end_time || '17:30').split(':').map(Number);
-                      const shiftEndMinutes = endHour * 60 + endMin;
-                      const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
-
-                      const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
-                      const shiftStartMinutes = startHour * 60 + startMin;
-                      const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
-
-                      const isCalculating = isBeforeShiftEnd && 
-                                          leave.status === 'absent';
-                      
-                      let displayStatus = leave.status.toUpperCase();
-                      let isNotStarted = false;
-                      if (isCalculating) {
-                        if (isBeforeShiftStart) {
-                          displayStatus = 'NOT STARTED';
-                          isNotStarted = true;
-                        } else {
-                          displayStatus = 'CALCULATING...';
-                        }
-                      }
-
-                      return (
-                        <span className={`px-2 py-1 rounded text-xs border ${
-                          isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20') :
-                          leave.status === 'on_leave' || leave.status === 'approved' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' :
-                          leave.status === 'rejected' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                          leave.status === 'cancelled' ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' :
-                          'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                        }`}>
-                          {displayStatus}
-                        </span>
-                      );
-                    })()}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </ResponsiveTable>
+      {/* Today's Leaves Section */}
+      <div className="space-y-6">
+        {renderShiftLeavesTable("Morning Shift Leaves", todaysLeaves.filter(l => (l.shift_name || '').toLowerCase().includes('morning')))}
+        {renderShiftLeavesTable("Night Shift Leaves", todaysLeaves.filter(l => (l.shift_name || '').toLowerCase().includes('night')))}
+        {todaysLeaves.some(l => !(l.shift_name || '').toLowerCase().includes('morning') && !(l.shift_name || '').toLowerCase().includes('night')) && 
+          renderShiftLeavesTable("Other Shift Leaves", todaysLeaves.filter(l => !(l.shift_name || '').toLowerCase().includes('morning') && !(l.shift_name || '').toLowerCase().includes('night')))
+        }
+      </div>
 
       {/* Holiday Management Section (MOVED TO BOTTOM) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">

@@ -21,6 +21,15 @@ const STATUS_META = {
   offline:  { label: 'Offline',  dot: 'bg-slate-500',   text: 'text-slate-500' },
 };
 
+const getStatusMeta = (m) => {
+  const role = m.role || m.user_role;
+  const isNightShift = m.shift_name && m.shift_name.toLowerCase().includes('night shift');
+  if (m.status === 'online' && role === 'employee' && isNightShift) {
+    return { label: 'Online(NS)', dot: 'bg-rose-500', text: 'text-rose-500' };
+  }
+  return STATUS_META[m.status] || STATUS_META.offline;
+};
+
 const LiveStatusPanel = ({ liveStatuses, user }) => {
   const [open, setOpen]           = useState(false);
   const [members, setMembers]     = useState([]);
@@ -197,7 +206,7 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
                   <div>
                     <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-cyan-400">Employees</p>
                     {employees.map(m => {
-                      const st = STATUS_META[m.status] || STATUS_META.offline;
+                      const st = getStatusMeta(m);
                       return (
                         <div key={m.user_id || m.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/40 transition-colors">
                           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-cyan-500/20 flex items-center justify-center text-cyan-300 font-bold text-xs flex-shrink-0">
@@ -242,7 +251,8 @@ const TopBar = ({ onMenuClick }) => {
     setStatus: setCurrentStatus,
     notifications,
     markAsRead,
-    markAllAsRead
+    markAllAsRead,
+    isWithinShift
   } = useContext(AuthContext);
   
   const [showNotifications, setShowNotifications] = useState(false);

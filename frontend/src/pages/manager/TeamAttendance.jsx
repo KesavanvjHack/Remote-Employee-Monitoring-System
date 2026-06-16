@@ -15,6 +15,18 @@ const ATTENDANCE_COLORS = {
   holiday:  'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20',
 };
 
+const parseTime12hToMinutes = (time12h) => {
+  if (!time12h) return 0;
+  const match = time12h.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toUpperCase();
+  if (period === 'PM' && hours < 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+};
+
 const TeamAttendance = () => {
   const [attendance, setAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -246,29 +258,44 @@ const TeamAttendance = () => {
                   const now = new Date();
                   const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
                   const istDate = new Date(istString);
-                  const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
-                  const [endHour, endMin] = (policy?.shift_end_time || '17:30').split(':').map(Number);
-                  const shiftEndMinutes = endHour * 60 + endMin;
-                  const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
 
-                  const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
-                  const shiftStartMinutes = startHour * 60 + startMin;
-                  const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
+                  const [recYear, recMonth, recDay] = record.date.split('-').map(Number);
+                  const shiftStartDate = new Date(recYear, recMonth - 1, recDay);
+                  const startMin = parseTime12hToMinutes(record.shift_start || '09:30 AM');
+                  shiftStartDate.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
 
-                  const isCalculating = record.date === todayStr && 
+                  const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
+                  const endMin = parseTime12hToMinutes(record.shift_end || '05:30 PM');
+                  shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+                  if (endMin <= startMin) {
+                    shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+                  }
+
+                  const isBeforeShiftStart = istDate < shiftStartDate;
+                  const isBeforeShiftEnd = istDate < shiftEndDate;
+
+                  const isToday = record.date === todayStr;
+                  const yesterday = new Date(istDate);
+                  yesterday.setDate(yesterday.getDate() - 1);
+                  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+                  const isRecordActive = isToday || (record.date === yesterdayStr && endMin <= startMin);
+
+                  const isCalculating = isRecordActive && 
                                       isBeforeShiftEnd &&
-                                      record.status !== 'present' && 
-                                      record.status !== 'on_leave' && 
-                                      record.status !== 'holiday';
+                                      record.status?.toLowerCase() !== 'present' && 
+                                      record.status?.toLowerCase() !== 'on_leave' && 
+                                      record.status?.toLowerCase() !== 'holiday' &&
+                                      record.status?.toLowerCase() !== 'half_day';
                   
                   let displayStatus = record.status;
-                  let isNotStarted = false;
+                  let isNotStartedState = false;
                   if (isCalculating) {
                     if (isBeforeShiftStart && !record.first_login) {
                       displayStatus = 'Not Started';
-                      isNotStarted = true;
+                      isNotStartedState = true;
                     } else {
-                      displayStatus = 'calculating...';
+                      displayStatus = 'Calculating...';
                     }
                   }
 
@@ -284,7 +311,7 @@ const TeamAttendance = () => {
                         </div>
                       </td>
                       <td className="px-3 py-4 text-center font-mono leading-tight whitespace-nowrap">
-                        <span className="block text-indigo-400 text-xs font-bold">
+                        <span className={`block text-xs font-bold ${isCalculating ? 'text-rose-400' : 'text-indigo-400'}`}>
                           {record.first_login ? format(new Date(record.first_login), 'hh:mm a') : '--:--'}
                         </span>
                         <span className="block text-slate-600 text-[10px] my-0.5">to</span>
@@ -294,7 +321,7 @@ const TeamAttendance = () => {
                       </td>
                       <td className="px-3 py-4 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest ${
-                          isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20') :
+                          isCalculating ? (isNotStartedState ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20') :
                           (ATTENDANCE_COLORS[record.status?.toLowerCase()] || 'bg-slate-500/10 text-slate-400')
                         }`}>
                           {displayStatus === 'on_leave' ? 'On Leave' : displayStatus === 'half_day' ? 'Half Day' : displayStatus?.replace('_', ' ')}

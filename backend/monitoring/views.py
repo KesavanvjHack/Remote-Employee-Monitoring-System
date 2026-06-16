@@ -8,6 +8,7 @@ from datetime import datetime, time
 from .models import MonitoringSession
 from .serializers import MonitoringSessionSerializer
 from core.models import User, AttendancePolicy, Shift
+from core.services import get_user_policy, get_user_shift_times
 
 class ShiftCheckView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -16,19 +17,16 @@ class ShiftCheckView(APIView):
         target_user_id = employee_id or request.user.id
         user = get_object_or_404(User, id=target_user_id)
         
-        # Determine shift from AttendancePolicy or Shift model
-        # Prioritizing AttendancePolicy for global settings if assigned to department
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
-        if user.department and user.department.policies.filter(is_active=True).exists():
-            policy = user.department.policies.filter(is_active=True).first()
-        
-        shift_start = policy.shift_start_time if policy else time(9, 0)
-        shift_end = policy.shift_end_time if policy else time(18, 0)
+        policy = get_user_policy(user)
+        shift_start, shift_end = get_user_shift_times(user, policy)
         
         now = timezone.localtime(timezone.now())
         current_time = now.time()
         
-        within_shift = shift_start <= current_time <= shift_end
+        if shift_start <= shift_end:
+            within_shift = shift_start <= current_time <= shift_end
+        else:
+            within_shift = current_time >= shift_start or current_time <= shift_end
         
         return Response({
             'within_shift': within_shift,
@@ -46,17 +44,14 @@ class MonitoringSessionViewSet(viewsets.ModelViewSet):
     def start_monitoring(self, request):
         user = request.user
         
-        # Logic to calculate shift window for the model
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
-        if user.department and user.department.policies.filter(is_active=True).exists():
-            policy = user.department.policies.filter(is_active=True).first()
+        policy = get_user_policy(user)
+        s_time, e_time = get_user_shift_times(user, policy)
             
         today = timezone.localtime(timezone.now()).date()
-        s_time = policy.shift_start_time if policy else time(9, 0)
-        e_time = policy.shift_end_time if policy else time(18, 0)
-        
         shift_start = timezone.make_aware(datetime.combine(today, s_time))
         shift_end = timezone.make_aware(datetime.combine(today, e_time))
+        if shift_end <= shift_start:
+            shift_end += timezone.timedelta(days=1)
 
         # Close any existing active sessions for this user
         MonitoringSession.objects.filter(employee=user, is_active=True).update(is_active=False)
@@ -94,22 +89,10 @@ class MonitoringSessionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='check-shift')
     def check_shift(self, request):
         user = request.user
-        policy = AttendancePolicy.objects.filter(is_active=True).first()
-        if user.department and user.department.policies.filter(is_active=True).exists():
-            policy = user.department.policies.filter(is_active=True).first()
-            
-        if not policy:
-            # Default fallback if no policy exists
-            return Response({
-                'within_shift': True, 
-                'shift_start': '00:00',
-                'shift_end': '23:59'
-            })
+        policy = get_user_policy(user)
+        s_time, e_time = get_user_shift_times(user, policy)
             
         now = timezone.localtime(timezone.now())
-        s_time = policy.shift_start_time
-        e_time = policy.shift_end_time
-        
         current_time = now.time()
         
         # Handle overnight shifts

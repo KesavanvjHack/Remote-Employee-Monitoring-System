@@ -9,6 +9,7 @@ const UserManagement = () => {
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [managers, setManagers] = useState([]);
+  const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exportRole, setExportRole] = useState('all');
   const [startDate, setStartDate] = useState('');
@@ -25,6 +26,7 @@ const UserManagement = () => {
     role: 'employee',
     department: '',
     manager: '',
+    shift: '',
     is_active: true,
     password: '',
     confirm_password: ''
@@ -36,13 +38,15 @@ const UserManagement = () => {
 
   const fetchData = async () => {
     try {
-      const [usersRes, deptsRes] = await Promise.all([
+      const [usersRes, deptsRes, shiftsRes] = await Promise.all([
         api.get('/users/'),
-        api.get('/departments/')
+        api.get('/departments/'),
+        api.get('/shifts/')
       ]);
       const fetchedUsers = usersRes.data.results || usersRes.data;
       setUsers(fetchedUsers);
       setDepartments(deptsRes.data.results || deptsRes.data);
+      setShifts(shiftsRes.data.results || shiftsRes.data);
       setManagers(fetchedUsers.filter(u => u.role === 'manager' || u.role === 'admin'));
     } catch (error) {
       toast.error('Failed to load users');
@@ -55,7 +59,7 @@ const UserManagement = () => {
     setEditingUser(null);
     setFormData({
       email: '', first_name: '', last_name: '', role: 'employee', 
-      department: '', manager: '', is_active: true, password: '', confirm_password: ''
+      department: '', manager: '', shift: '', is_active: true, password: '', confirm_password: ''
     });
     setIsModalOpen(true);
   };
@@ -69,6 +73,7 @@ const UserManagement = () => {
       role: user.role,
       department: user.department || '',
       manager: user.manager || '',
+      shift: user.shift || '',
       is_active: user.is_active,
       password: '',
       confirm_password: ''
@@ -90,12 +95,12 @@ const UserManagement = () => {
       const payload = { ...formData };
       if (payload.department === '') payload.department = null;
       if (payload.manager === '') payload.manager = null;
+      if (payload.shift === '') payload.shift = null;
 
       if (editingUser) {
         // Remove password fields for patch as it's typically handled separately or left blank if not changing
         delete payload.password;
         delete payload.confirm_password;
-        delete payload.email; // Usually cannot change email after creation easily without verification
         await api.patch(`/users/${editingUser.id}/`, payload);
         toast.success('User updated successfully');
       } else {
@@ -315,6 +320,7 @@ const UserManagement = () => {
                 <th className="px-6 py-4 font-semibold tracking-wider">Email</th>
                 <th className="px-6 py-4 font-semibold tracking-wider">Role</th>
                 <th className="px-6 py-4 font-semibold tracking-wider">Department</th>
+                <th className="px-6 py-4 font-semibold tracking-wider">Shift</th>
                 <th className="px-6 py-4 font-semibold tracking-wider">Manager</th>
                 <th className="px-6 py-4 font-semibold tracking-wider">Status</th>
                 <th className="px-6 py-4 text-right font-semibold tracking-wider">Actions</th>
@@ -335,6 +341,7 @@ const UserManagement = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4">{user.department_name || '-'}</td>
+                  <td className="px-6 py-4 font-mono text-xs">{user.shift_name || '-'}</td>
                   <td className="px-6 py-4">{user.manager_name || '-'}</td>
                   <td className="px-6 py-4">
                     {user.is_active ? (
@@ -393,8 +400,8 @@ const UserManagement = () => {
 
               <div>
                 <label htmlFor="modalEmail" className="block text-sm font-medium text-slate-400 mb-1">Email (Login ID) *</label>
-                <input required type="email" id="modalEmail" name="email" value={formData.email} onChange={handleChange} disabled={!!editingUser}
-                       className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50" />
+                <input required type="email" id="modalEmail" name="email" value={formData.email} onChange={handleChange}
+                       className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
               </div>
 
               {!editingUser && (
@@ -446,15 +453,45 @@ const UserManagement = () => {
                   </select>
                 </div>
                 <div>
-                   <label htmlFor="modalManager" className="block text-sm font-medium text-slate-400 mb-1">Manager</label>
-                   <select id="modalManager" name="manager" value={formData.manager} onChange={handleChange}
-                           className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
-                     <option value="">None</option>
-                     {managers.map(m => (
-                       <option key={m.id} value={m.id}>{m.full_name}</option>
-                     ))}
-                   </select>
+                  <label htmlFor="modalShift" className="block text-sm font-medium text-slate-400 mb-1">Shift Schedule</label>
+                  <select id="modalShift" name="shift" value={formData.shift} onChange={handleChange}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                    <option value="">None</option>
+                    {shifts
+                      .filter(s => s.name === 'Morning Shift' || s.name === 'Night Shift')
+                      .map(s => {
+                        const name = s.name.replace(/\s*Shift\s*/gi, '');
+                        const formatTime = (timeStr) => {
+                          if (!timeStr) return '';
+                          const [hStr, mStr] = timeStr.split(':');
+                          const h = parseInt(hStr, 10);
+                          const ampm = h >= 12 ? 'PM' : 'AM';
+                          const h12 = h % 12 || 12;
+                          return `${h12}:${mStr}${ampm}`;
+                        };
+                        const start = formatTime(s.start_time);
+                        const end = formatTime(s.end_time);
+                        return (
+                          <option key={s.id} value={s.id}>
+                            {name} {start} to {end}
+                          </option>
+                        );
+                      })}
+
+
+                  </select>
                 </div>
+              </div>
+
+              <div>
+                 <label htmlFor="modalManager" className="block text-sm font-medium text-slate-400 mb-1">Manager</label>
+                 <select id="modalManager" name="manager" value={formData.manager} onChange={handleChange}
+                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                   <option value="">None</option>
+                   {managers.map(m => (
+                     <option key={m.id} value={m.id}>{m.full_name}</option>
+                   ))}
+                 </select>
               </div>
 
               <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-slate-700">

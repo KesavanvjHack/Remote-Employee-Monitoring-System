@@ -82,6 +82,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         'self', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='subordinates', db_index=True
     )
+    shift = models.ForeignKey(
+        'Shift', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='employees', db_index=True
+    )
     phone = models.CharField(max_length=20, blank=True)
     is_online = models.BooleanField(default=False)
     last_seen = models.DateTimeField(null=True, blank=True)
@@ -154,6 +158,18 @@ class AttendancePolicy(models.Model):
         default=24,
         help_text='Maximum duration in hours for a single login session before auto-logout'
     )
+    base_hourly_rate = models.DecimalField(
+        max_digits=10, decimal_places=2, default=20.00,
+        help_text='Base hourly wage rate for employees on this policy'
+    )
+    overtime_rate_multiplier = models.DecimalField(
+        max_digits=4, decimal_places=2, default=1.50,
+        help_text='Overtime multiplier (e.g. 1.50 for time and a half)'
+    )
+    night_differential_multiplier = models.DecimalField(
+        max_digits=4, decimal_places=2, default=1.20,
+        help_text='Differential multiplier for hours worked during night shift (e.g. 1.20)'
+    )
     is_active = models.BooleanField(default=True)
     department = models.ForeignKey(
         Department, on_delete=models.SET_NULL, null=True, blank=True,
@@ -161,6 +177,7 @@ class AttendancePolicy(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
 
     class Meta:
         db_table = 'attendance_policy'
@@ -172,9 +189,25 @@ class AttendancePolicy(models.Model):
     def save(self, *args, **kwargs):
         is_new = self._state.adding
         super().save(*args, **kwargs)
+        # Synchronize this policy to the Shift model so it can be assigned to users
+        from .models import Shift
+        shift_obj, created = Shift.objects.get_or_create(
+            name=self.name,
+            defaults={
+                'start_time': self.shift_start_time,
+                'end_time': self.shift_end_time,
+                'grace_period_minutes': 15,
+                'is_active': True
+            }
+        )
+        if not created:
+            shift_obj.start_time = self.shift_start_time
+            shift_obj.end_time = self.shift_end_time
+            shift_obj.save()
         # Broadcast policy update to all clients
         from .services import StatusService
         StatusService.broadcast_policy_update()
+
 
 
 class Holiday(models.Model):

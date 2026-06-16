@@ -8,6 +8,26 @@ import { formatLastLogout, formatDecimalHours } from '../../utils/format';
 import LiveDuration from '../../components/LiveDuration';
 import { AuthContext } from '../../context/AuthContext';
 
+const parseTime12hToMinutes = (time12h) => {
+  if (!time12h) return 0;
+  const match = time12h.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toUpperCase();
+  if (period === 'PM' && hours < 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+};
+
+const format24hTo12h = (time24h) => {
+  if (!time24h) return '09:30 AM';
+  const [h, m] = time24h.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 || 12;
+  return `${hour12.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${period}`;
+};
+
 const AttendanceHub = () => {
   const [attendance, setAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -22,6 +42,7 @@ const AttendanceHub = () => {
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
+  const [shiftFilter, setShiftFilter] = useState('all');
 
   useEffect(() => {
     fetchData();
@@ -78,6 +99,8 @@ const AttendanceHub = () => {
         user_name: u.full_name || 'N/A',
         user_email: u.email,
         user_role: u.role,
+        shift_name: u.shift_name || 'Morning Shift',
+        manager_name: u.manager_name || '—',
         date: todayStr,
         status: 'Absent',
         live_status: 'Offline',
@@ -89,7 +112,9 @@ const AttendanceHub = () => {
         missing_seconds: targetSeconds,
         is_flagged: false,
         flag_reason: '',
-        manager_remark: 'No record found / Absent'
+        manager_remark: 'No record found / Absent',
+        shift_start: format24hTo12h(u.shift_start_time),
+        shift_end: format24hTo12h(u.shift_end_time),
       }));
       
       setAttendance([...allAtt, ...dummyRecords]);
@@ -112,6 +137,10 @@ const AttendanceHub = () => {
 
     if (employeeFilter !== 'all') {
       records = records.filter(record => record.user_name === employeeFilter);
+    }
+
+    if (shiftFilter !== 'all') {
+      records = records.filter(record => (record.shift_name || '').toLowerCase().includes(shiftFilter));
     }
     
     // Since we now filter on the server, we just need to return the records
@@ -175,6 +204,203 @@ const AttendanceHub = () => {
     }
   };
 
+  const renderShiftTable = (title, records) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    return (
+      <ResponsiveTable title={title}>
+        <div className="bg-slate-800/80 p-4 border-b border-slate-700/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-lg font-medium text-white flex items-center gap-2">
+              <ClockIcon className="h-5 w-5 text-indigo-400" />
+              {title} - Filtered Records ({records.length})
+            </h2>
+            {lastUpdated && (
+              <span className="text-[10px] text-slate-500 font-mono mt-1 block px-7">
+                Last synced: {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+          
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+            <button 
+              onClick={() => fetchData()}
+              className="p-2 bg-slate-900/50 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg border border-slate-700 transition-all flex items-center gap-2"
+              title="Manual Refresh"
+            >
+              <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              <span className="text-xs font-medium">Refresh</span>
+            </button>
+            <div className="text-xs font-mono text-slate-400 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg whitespace-nowrap">
+              {dateFilter === 'custom' ? `${startDate} to ${endDate}` : dateFilter.replace('_', ' ').toUpperCase()}
+            </div>
+          </div>
+        </div>
+
+        <table className="w-full text-left text-sm text-slate-300">
+          <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
+            <tr>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs whitespace-nowrap">Date</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Team Member</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Manager</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Timing</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Status</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Work</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Break</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs text-slate-400">Idle</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Gap</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Alerts</th>
+              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Remarks</th>
+              {user?.role === 'admin' && (
+                <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Actions</th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-700/50">
+            {loading ? (
+              [...Array(3)].map((_, i) => (
+                <tr key={i}>
+                  {[...Array(13)].map((_, j) => (
+                    <td key={j} className="px-6 py-4">
+        <div className="h-4 w-full skeleton-pulse"></div>
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              records.map((record) => {
+                const now = new Date();
+                const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+                const istDate = new Date(istString);
+
+                const [recYear, recMonth, recDay] = record.date.split('-').map(Number);
+                const shiftStartDate = new Date(recYear, recMonth - 1, recDay);
+                const startMin = parseTime12hToMinutes(record.shift_start || '09:30 AM');
+                shiftStartDate.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
+
+                const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
+                const endMin = parseTime12hToMinutes(record.shift_end || '05:30 PM');
+                shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+                if (endMin <= startMin) {
+                  shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+                }
+
+                const isBeforeShiftStart = istDate < shiftStartDate;
+                const isBeforeShiftEnd = istDate < shiftEndDate;
+
+                const isToday = record.date === todayStr;
+                const yesterday = new Date(istDate);
+                yesterday.setDate(yesterday.getDate() - 1);
+                const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+                const isRecordActive = isToday || (record.date === yesterdayStr && endMin <= startMin);
+
+                const isCalculating = isRecordActive && 
+                                    isBeforeShiftEnd &&
+                                    record.status?.toLowerCase() !== 'present' && 
+                                    record.status?.toLowerCase() !== 'on_leave' && 
+                                    record.status?.toLowerCase() !== 'holiday' &&
+                                    record.status?.toLowerCase() !== 'half_day';
+                
+                let displayStatus = record.status;
+                let isNotStartedState = false;
+                if (isCalculating) {
+                  if (isBeforeShiftStart && !record.first_login) {
+                    displayStatus = 'Not Started';
+                    isNotStartedState = true;
+                  } else {
+                    displayStatus = 'Calculating...';
+                  }
+                }
+                const normalizedStatus = displayStatus?.toLowerCase() === 'not started' ? 'not_started' : displayStatus?.toLowerCase();
+                
+                return (
+                  <tr key={record.id} className="hover:bg-slate-700/20 transition-colors">
+                    <td className="px-2 py-3 font-mono text-slate-400 text-[10px] whitespace-nowrap text-center">
+                      {record.date ? format(parseISO(record.date), 'MMM dd, yyyy') : '-'}
+                    </td>
+                    <td className="px-2 py-3 text-center">
+                      <div className="flex flex-col items-center">
+                        <p className="font-semibold text-slate-200 text-xs truncate max-w-[120px]">{record.user_name}</p>
+                        <p className="text-[10px] text-slate-500 truncate max-w-[100px]">{record.user_email}</p>
+                      </div>
+                    </td>
+                    <td className="px-2 py-3 text-center text-xs text-slate-300 font-semibold">
+                      {record.manager_name || '—'}
+                    </td>
+                    <td className="px-2 py-3 text-center font-mono leading-tight whitespace-nowrap">
+                      <span className={`block text-xs font-bold ${isCalculating ? 'text-rose-400' : 'text-indigo-400'}`}>
+                        {record.first_login ? format(parseISO(record.first_login), 'hh:mm a') : '--:--'}
+                      </span>
+                      <span className="block text-slate-600 text-[10px] my-0.5">to</span>
+                      <span className="block text-rose-400 text-xs font-bold">
+                        {record.last_logout && record.last_logout !== '--:--' ? format(parseISO(record.last_logout), 'hh:mm a') : '--:--'}
+                      </span>
+                    </td>
+                    <td className="px-2 py-3 text-center">
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center justify-center gap-1 w-max mx-auto
+                        ${isCalculating ? (isNotStartedState ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20') :
+                          normalizedStatus === 'present' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
+                          normalizedStatus === 'absent' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                          normalizedStatus === 'half_day' || normalizedStatus === 'half day' ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' :
+                          normalizedStatus === 'on_leave' || normalizedStatus === 'on leave' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' :
+                          'bg-slate-500/10 text-slate-400 border border-slate-500/20'}
+                      `}>
+                        {displayStatus === 'on_leave' ? 'On Leave' : displayStatus === 'half_day' ? 'Half Day' : displayStatus}
+                      </span>
+                    </td>
+                    <td className="px-2 py-3 text-emerald-400 font-mono text-xs text-center">
+                       <LiveDuration initialSeconds={record.total_work_seconds} status={record.live_status} type="work" isToday={record.date === todayStr} />
+                    </td>
+                    <td className="px-2 py-3 text-cyan-400 font-mono text-xs text-center">
+                      <LiveDuration initialSeconds={record.total_break_seconds} status={record.live_status} type="break" isToday={record.date === todayStr} />
+                    </td>
+                    <td className="px-2 py-3 text-amber-400 font-mono text-xs text-center">
+                      <LiveDuration initialSeconds={record.total_idle_seconds} status={record.live_status} type="idle" isToday={record.date === todayStr} />
+                    </td>
+                    <td className="px-2 py-3 text-orange-400/90 font-mono text-xs text-center font-bold whitespace-nowrap">
+                       {record.missing_seconds > 0 ? (
+                          <span>{Math.floor(record.missing_seconds / 3600).toString().padStart(2, '0')}:{Math.floor((record.missing_seconds % 3600) / 60).toString().padStart(2, '0')}:{(record.missing_seconds % 60).toString().padStart(2, '0')}</span>
+                       ) : '—'}
+                    </td>
+                    <td className="px-2 py-3 text-center">
+                      {record.is_flagged ? (
+                        <span className="text-rose-400 font-bold text-[10px] flex items-center justify-center gap-1 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 uppercase tracking-tighter" title={record.flag_reason}>
+                          <FlagIcon className="h-3 w-3" /> Alert
+                        </span>
+                      ) : (
+                        <span className="text-slate-600 font-mono text-sm text-center">—</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-3 text-slate-400 text-[10px] italic truncate max-w-[150px] text-center">
+                      {record.manager_remark || record.flag_reason || '—'}
+                    </td>
+                    {user?.role === 'admin' && (
+                      <td className="px-2 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => handleOverride(record, 'present')} className="w-6 h-6 flex items-center justify-center bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded hover:bg-emerald-500/20" title="Mark Present">P</button>
+                          <button onClick={() => handleOverride(record, 'half_day')} className="w-6 h-6 flex items-center justify-center bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded hover:bg-sky-500/20" title="Mark Half Day">H</button>
+                          <button onClick={() => handleOverride(record, 'absent')} className="w-6 h-6 flex items-center justify-center bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded hover:bg-rose-500/20" title="Mark Absent">A</button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </ResponsiveTable>
+    );
+  };
+
+  const filteredRecords = getFilteredRecords();
+  const morningRecords = filteredRecords.filter(r => (r.shift_name || '').toLowerCase().includes('morning'));
+  const nightRecords = filteredRecords.filter(r => (r.shift_name || '').toLowerCase().includes('night'));
+  const otherRecords = filteredRecords.filter(r => 
+    !(r.shift_name || '').toLowerCase().includes('morning') && 
+    !(r.shift_name || '').toLowerCase().includes('night')
+  );
+
   if (loading) return <div className="text-indigo-400 p-8 text-center animate-pulse">Loading Attendance Hub...</div>;
 
   return (
@@ -220,6 +446,20 @@ const AttendanceHub = () => {
               <option value="all">All Roles</option>
               <option value="manager">Managers</option>
               <option value="employee">Employees</option>
+            </select>
+          </div>
+
+          <div className="flex-1 min-w-[120px]">
+            <select
+              id="shiftFilter"
+              name="shift-filter"
+              value={shiftFilter}
+              onChange={(e) => setShiftFilter(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 text-slate-300 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 p-2.5"
+            >
+              <option value="all">All Shifts</option>
+              <option value="morning">Morning Shift</option>
+              <option value="night">Night Shift</option>
             </select>
           </div>
 
@@ -298,12 +538,18 @@ const AttendanceHub = () => {
               const now = new Date();
               const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
               const istDate = new Date(istString);
-              const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
-              const [endHour, endMin] = (policy?.shift_end_time || '17:30').split(':').map(Number);
-              const shiftEndMinutes = endHour * 60 + endMin;
-              const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
-              
-              const isToday = r.date === new Date().toISOString().split('T')[0];
+
+              const [recYear, recMonth, recDay] = r.date.split('-').map(Number);
+              const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
+              const startMin = parseTime12hToMinutes(r.shift_start || '09:30 AM');
+              const endMin = parseTime12hToMinutes(r.shift_end || '05:30 PM');
+              shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+              if (endMin <= startMin) {
+                shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+              }
+
+              const isToday = r.date === today;
+              const isBeforeShiftEnd = istDate < shiftEndDate;
               return !(isToday && isBeforeShiftEnd);
             }).length}
           </p>
@@ -326,190 +572,38 @@ const AttendanceHub = () => {
                 const now = new Date();
                 const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
                 const istDate = new Date(istString);
-                const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
-                const [endHour, endMin] = (policy?.shift_end_time || '17:30').split(':').map(Number);
-                const shiftEndMinutes = endHour * 60 + endMin;
-                const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
+
+                const [recYear, recMonth, recDay] = r.date.split('-').map(Number);
+                const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
+                const startMin = parseTime12hToMinutes(r.shift_start || '09:30 AM');
+                const endMin = parseTime12hToMinutes(r.shift_end || '05:30 PM');
+                shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+                if (endMin <= startMin) {
+                  shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+                }
+
+                const shiftStartDate = new Date(recYear, recMonth - 1, recDay);
+                shiftStartDate.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
+                const isBeforeShiftStart = istDate < shiftStartDate;
+                const isNotStarted = isBeforeShiftStart && !r.first_login;
+
+                const isToday = r.date === today;
+                const isBeforeShiftEnd = istDate < shiftEndDate;
                 
                 const status = (r.status || '').toLowerCase();
-                const isToday = r.date === new Date().toISOString().split('T')[0];
-                return isToday && isBeforeShiftEnd && status !== 'present' && status !== 'on_leave' && status !== 'holiday' && status !== 'halfday' && status !== 'half_day';
+                return isToday && isBeforeShiftEnd && !isNotStarted && status !== 'present' && status !== 'on_leave' && status !== 'holiday' && status !== 'halfday' && status !== 'half_day';
               }).length}
             </p>
           </div>
         )}
       </div>
 
-      <ResponsiveTable title="Live Attendance Log">
-        <div className="bg-slate-800/80 p-4 border-b border-slate-700/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h2 className="text-lg font-medium text-white flex items-center gap-2">
-              <ClockIcon className="h-5 w-5 text-indigo-400" />
-              Filtered Records
-            </h2>
-            {lastUpdated && (
-              <span className="text-[10px] text-slate-500 font-mono mt-1 block px-7">
-                Last synced: {lastUpdated.toLocaleTimeString()}
-              </span>
-            )}
-          </div>
-          
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
-            <button 
-              onClick={() => fetchData()}
-              className="p-2 bg-slate-900/50 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg border border-slate-700 transition-all flex items-center gap-2"
-              title="Manual Refresh"
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              <span className="text-xs font-medium">Refresh</span>
-            </button>
-            <div className="text-xs font-mono text-slate-400 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg whitespace-nowrap">
-              {dateFilter === 'custom' ? `${startDate} to ${endDate}` : dateFilter.replace('_', ' ').toUpperCase()}
-            </div>
-          </div>
-        </div>
-
-        <table className="w-full text-left text-sm text-slate-300">
-          <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
-            <tr>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs whitespace-nowrap">Date</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Team Member</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-[10px] text-slate-400">Shift</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Status</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Work</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Break</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs text-slate-400">Idle</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Gap</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Alerts</th>
-              <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Remarks</th>
-              {user?.role === 'admin' && (
-                <th className="px-2 py-3 font-semibold tracking-wider text-center text-xs">Actions</th>
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-700/50">
-            {loading ? (
-              [...Array(5)].map((_, i) => (
-                <tr key={i}>
-                  {[...Array(10)].map((_, j) => (
-                    <td key={j} className="px-6 py-4">
-                      <div className="h-4 w-full skeleton-pulse"></div>
-                    </td>
-                  ))}
-                </tr>
-              ))
-            ) : (
-              getFilteredRecords().map((record) => {
-                const todayStr = new Date().toISOString().split('T')[0];
-                const now = new Date();
-                const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-                const istDate = new Date(istString);
-                const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
-                const [endHour, endMin] = (policy?.shift_end_time || '17:30').split(':').map(Number);
-                const shiftEndMinutes = endHour * 60 + endMin;
-                const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
-
-                const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
-                const shiftStartMinutes = startHour * 60 + startMin;
-                const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
-
-                const isCalculating = record.date === todayStr && 
-                                    isBeforeShiftEnd &&
-                                    record.status !== 'present' && 
-                                    record.status !== 'on_leave' && 
-                                    record.status !== 'holiday';
-                
-                let displayStatus = record.status;
-                let isNotStarted = false;
-                if (isCalculating) {
-                  if (isBeforeShiftStart && !record.first_login) {
-                    displayStatus = 'Not Started';
-                    isNotStarted = true;
-                  } else {
-                    displayStatus = 'calculating...';
-                  }
-                }
-                const normalizedStatus = record.status?.toLowerCase();
-                
-                return (
-                  <tr key={record.id} className="hover:bg-slate-700/20 transition-colors">
-                    <td className="px-2 py-3 font-mono text-slate-400 text-[10px] whitespace-nowrap text-center">
-                      {record.date ? format(parseISO(record.date), 'MMM dd, yyyy') : '-'}
-                    </td>
-                    <td className="px-2 py-3 text-center">
-                      <div className="flex flex-col items-center">
-                        <p className="font-semibold text-slate-200 text-xs truncate max-w-[120px]">{record.user_name}</p>
-                        <p className="text-[10px] text-slate-500 truncate max-w-[100px]">{record.user_email}</p>
-                      </div>
-                    </td>
-                    <td className="px-2 py-3 text-center font-mono leading-tight whitespace-nowrap">
-                      <span className="block text-indigo-400 text-xs font-bold">
-                        {record.first_login ? format(parseISO(record.first_login), 'hh:mm a') : '--:--'}
-                      </span>
-                      <span className="block text-slate-600 text-[10px] my-0.5">to</span>
-                      <span className="block text-rose-400 text-xs font-bold">
-                        {record.last_logout && record.last_logout !== '--:--' ? format(parseISO(record.last_logout), 'hh:mm a') : '--:--'}
-                      </span>
-                    </td>
-                    <td className="px-2 py-3 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center justify-center gap-1 w-max mx-auto
-                        ${isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20') :
-                          normalizedStatus === 'present' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
-                          normalizedStatus === 'absent' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
-                          normalizedStatus === 'half_day' || normalizedStatus === 'half day' ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' :
-                          normalizedStatus === 'on_leave' || normalizedStatus === 'on leave' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' :
-                          'bg-slate-500/10 text-slate-400 border border-slate-500/20'}
-                      `}>
-                        {displayStatus === 'on_leave' ? 'On Leave' : displayStatus === 'half_day' ? 'Half Day' : displayStatus}
-                      </span>
-                    </td>
-                    <td className="px-2 py-3 text-emerald-400 font-mono text-xs text-center">
-                       <LiveDuration initialSeconds={record.total_work_seconds} status={record.live_status} type="work" isToday={record.date === todayStr} />
-                    </td>
-                    <td className="px-2 py-3 text-cyan-400 font-mono text-xs text-center">
-                      <LiveDuration initialSeconds={record.total_break_seconds} status={record.live_status} type="break" isToday={record.date === todayStr} />
-                    </td>
-                    <td className="px-2 py-3 text-amber-400 font-mono text-xs text-center">
-                      <LiveDuration initialSeconds={record.total_idle_seconds} status={record.live_status} type="idle" isToday={record.date === todayStr} />
-                    </td>
-                    <td className="px-2 py-3 text-orange-400/90 font-mono text-xs text-center font-bold whitespace-nowrap">
-                       {record.missing_seconds > 0 ? (
-                          <span>{Math.floor(record.missing_seconds / 3600).toString().padStart(2, '0')}:{Math.floor((record.missing_seconds % 3600) / 60).toString().padStart(2, '0')}:{(record.missing_seconds % 60).toString().padStart(2, '0')}</span>
-                       ) : '—'}
-                    </td>
-                    <td className="px-2 py-3 text-center">
-                      {record.is_flagged ? (
-                        <span className="text-rose-400 font-bold text-[10px] flex items-center justify-center gap-1 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 uppercase tracking-tighter" title={record.flag_reason}>
-                          <FlagIcon className="h-3 w-3" /> Alert
-                        </span>
-                      ) : (
-                        <span className="text-slate-600 font-mono text-sm text-center">—</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-3 text-slate-400 text-[10px] italic truncate max-w-[150px] text-center">
-                      {record.manager_remark || record.flag_reason || '—'}
-                    </td>
-                    {user?.role === 'admin' && (
-                      <td className="px-2 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button onClick={() => handleOverride(record, 'present')} className="w-6 h-6 flex items-center justify-center bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded hover:bg-emerald-500/20" title="Mark Present">P</button>
-                          <button onClick={() => handleOverride(record, 'half_day')} className="w-6 h-6 flex items-center justify-center bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded hover:bg-sky-500/20" title="Mark Half Day">H</button>
-                          <button onClick={() => handleOverride(record, 'absent')} className="w-6 h-6 flex items-center justify-center bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded hover:bg-rose-500/20" title="Mark Absent">A</button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })
-            )}
-            {!loading && attendance.length === 0 && (
-              <tr>
-                <td colSpan="11" className="px-6 py-8 text-center text-slate-500">No records found</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </ResponsiveTable>
+      {/* Tables split by shift */}
+      <div className="space-y-8">
+        {renderShiftTable("Morning Shift Attendance", morningRecords)}
+        {renderShiftTable("Night Shift Attendance", nightRecords)}
+        {otherRecords.length > 0 && renderShiftTable("Other Shift Attendance", otherRecords)}
+      </div>
     </div>
   );
 };

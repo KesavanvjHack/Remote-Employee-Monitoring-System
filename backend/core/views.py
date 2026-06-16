@@ -702,7 +702,7 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
         today = date.today()
         
         # 1. Get all active employees and managers
-        users = User.objects.filter(is_active=True, role__in=['employee', 'manager'])
+        users = User.objects.filter(is_active=True, role__in=['employee', 'manager']).select_related('shift')
         
         # 2. Get today's actual attendance records
         attendances = Attendance.objects.filter(
@@ -721,6 +721,12 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
             att = att_map.get(u.id)
             leave = leave_map.get(u.id)
             
+            from core.services import get_user_policy, get_user_shift_times
+            policy = get_user_policy(u)
+            s_time, e_time = get_user_shift_times(u, policy)
+            s_str = s_time.strftime('%I:%M %p') if s_time else '09:30 AM'
+            e_str = e_time.strftime('%I:%M %p') if e_time else '05:30 PM'
+            
             if leave:
                 result.append({
                     'id': f"leave_{u.id}_{today}",
@@ -729,7 +735,10 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
                     'user_role': u.role,
                     'status': 'on_leave',
                     'leave_type': leave.get_leave_type_display() if leave else "Leave",
-                    'reason': leave.reason or leave.get_leave_type_display()
+                    'reason': leave.reason or leave.get_leave_type_display(),
+                    'shift_start': s_str,
+                    'shift_end': e_str,
+                    'shift_name': u.shift.name if u.shift else 'Morning Shift',
                 })
             elif att:
                 if att.status == Attendance.STATUS_ON_LEAVE:
@@ -740,7 +749,10 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
                         'user_role': u.role,
                         'status': att.status,
                         'leave_type': 'Leave',
-                        'reason': att.manager_remark or att.flag_reason or 'No reason provided'
+                        'reason': att.manager_remark or att.flag_reason or 'No reason provided',
+                        'shift_start': s_str,
+                        'shift_end': e_str,
+                        'shift_name': u.shift.name if u.shift else 'Morning Shift',
                     })
                 elif att.status == Attendance.STATUS_ABSENT:
                     result.append({
@@ -750,7 +762,10 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
                         'user_role': u.role,
                         'status': att.status,
                         'leave_type': '-',
-                        'reason': '-'
+                        'reason': '-',
+                        'shift_start': s_str,
+                        'shift_end': e_str,
+                        'shift_name': u.shift.name if u.shift else 'Morning Shift',
                     })
             else:
                 result.append({
@@ -760,7 +775,10 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
                     'user_role': u.role,
                     'status': 'absent',
                     'leave_type': '-',
-                    'reason': '-'
+                    'reason': '-',
+                    'shift_start': s_str,
+                    'shift_end': e_str,
+                    'shift_name': u.shift.name if u.shift else 'Morning Shift',
                 })
                 
         return Response(result)
@@ -1009,7 +1027,7 @@ class TeamStatusView(APIView):
             team = User.objects.filter(
                 is_active=True, 
                 role__in=['manager', 'employee']
-            ).select_related('department', 'manager')
+            ).select_related('department', 'manager', 'shift')
         elif user.role == 'manager':
             # Managers see their subordinates PLUS themselves (to see their own status on the same page)
             subordinate_ids = list(user.subordinates.values_list('id', flat=True))
@@ -1017,7 +1035,7 @@ class TeamStatusView(APIView):
             team = User.objects.filter(
                 id__in=subordinate_ids,
                 is_active=True
-            ).select_related('department', 'manager')
+            ).select_related('department', 'manager', 'shift')
         else:
             team = User.objects.none()
 
@@ -1025,6 +1043,26 @@ class TeamStatusView(APIView):
         for member in team:
             # Optionally skip self if requested, but generally useful to see self too
             status_data = StatusService.get_user_status(member)
+            
+            # Check if within shift
+            is_within_shift = True
+            if member.role == 'employee':
+                from core.services import get_user_shift_times, get_user_policy
+                import datetime
+                policy = get_user_policy(member)
+                s_time, e_time = get_user_shift_times(member, policy)
+                now_local = timezone.localtime(timezone.now())
+                start_dt = now_local.replace(hour=s_time.hour, minute=s_time.minute, second=0, microsecond=0)
+                end_dt = now_local.replace(hour=e_time.hour, minute=e_time.minute, second=0, microsecond=0)
+                
+                if end_dt <= start_dt:
+                    # Overnight shift
+                    end_next = end_dt + datetime.timedelta(days=1)
+                    start_yesterday = start_dt - datetime.timedelta(days=1)
+                    is_within_shift = (start_dt <= now_local <= end_next) or (start_yesterday <= now_local <= end_dt)
+                else:
+                    is_within_shift = start_dt <= now_local <= end_dt
+
             result.append({
                 'user_id': str(member.id),
                 'user_name': member.full_name,
@@ -1032,6 +1070,8 @@ class TeamStatusView(APIView):
                 'role': member.role,
                 'department': member.department.name if member.department else None,
                 'status': status_data['status'],
+                'is_within_shift': is_within_shift,
+                'shift_name': member.shift.name if member.shift else None,
             })
         return Response(result)
 
@@ -1301,8 +1341,19 @@ class FlaggedAttendanceView(generics.ListAPIView):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class AttendancePolicyViewSet(viewsets.ModelViewSet):
-    queryset = AttendancePolicy.objects.all()
     serializer_class = AttendancePolicySerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return AttendancePolicy.objects.none()
+        if user.role in ('admin', 'manager'):
+            return AttendancePolicy.objects.all()
+        from core.services import get_user_policy
+        p = get_user_policy(user)
+        if p:
+            return AttendancePolicy.objects.filter(id=p.id)
+        return AttendancePolicy.objects.none()
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -1397,50 +1448,96 @@ class AttendancePolicyViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], permission_classes=[IsAdmin])
     def reset_day_sessions(self, request):
-        """Administrative action to clear all work sessions and reset attendance for a specific date."""
-        date_str = request.data.get('date')
-        if not date_str:
-            return Response({'error': 'Date is required.'}, status=400)
+        """Administrative action to clear work sessions and reset attendance based on scope and range."""
+        scope = request.data.get('scope', 'all')
+        employee_id = request.data.get('employee_id')
+        range_type = request.data.get('range_type', 'today')
+
+        today = timezone.localtime(timezone.now()).date()
         
-        try:
-            from datetime import datetime
-            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-        except ValueError:
-            return Response({'error': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+        if range_type == 'today':
+            date_str = request.data.get('date') or str(today)
+            try:
+                from datetime import datetime
+                start_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                end_date = start_date
+            except ValueError:
+                return Response({'error': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+        elif range_type == 'week':
+            # Monday of current week to today
+            start_date = today - timedelta(days=today.weekday())
+            end_date = today
+        elif range_type == 'custom':
+            start_str = request.data.get('start_date')
+            end_str = request.data.get('end_date')
+            if not start_str or not end_str:
+                return Response({'error': 'Start date and end date are required for custom range.'}, status=400)
+            try:
+                from datetime import datetime
+                start_date = datetime.strptime(start_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response({'error': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+        else:
+            return Response({'error': 'Invalid range type.'}, status=400)
+            
+        if start_date > end_date:
+            return Response({'error': 'Start date must be before or equal to end date.'}, status=400)
 
-        # 1. Find all attendance for this date
-        attendances = Attendance.objects.filter(date=target_date)
+        # 1. Filter attendance
+        attendances = Attendance.objects.filter(date__range=(start_date, end_date))
+        
+        if scope == 'particular':
+            if not employee_id:
+                return Response({'error': 'Employee ID is required for particular employee reset.'}, status=400)
+            attendances = attendances.filter(user_id=employee_id)
+        
         count = attendances.count()
-
         if count == 0:
-            return Response({'message': f'No attendance records found for {date_str}.'})
+            return Response({'message': 'No attendance records found for the specified criteria.'}, status=status.HTTP_200_OK)
 
         # 2. Delete all work sessions associated with these attendance records
-        # This will also delete BreakSession and IdleLog via CASCADE
         WorkSession.objects.filter(attendance__in=attendances).delete()
 
         # 3. Reset attendance status
-        holiday = Holiday.objects.filter(date=target_date).first()
-        new_status = Attendance.STATUS_HOLIDAY if holiday else Attendance.STATUS_ABSENT
-        remark = f"Holiday: {holiday.name}" if holiday else "Attendance reset by administrator."
+        holidays = Holiday.objects.filter(date__range=(start_date, end_date))
+        holiday_dates = {h.date for h in holidays}
 
-        attendances.update(
-            status=new_status,
+        # Bulk reset for non-holidays
+        non_holiday_attendances = attendances.exclude(date__in=holiday_dates)
+        non_holiday_attendances.update(
+            status=Attendance.STATUS_ABSENT,
             total_work_seconds=0,
             total_break_seconds=0,
             total_idle_seconds=0,
-            manager_remark=remark,
+            manager_remark="Attendance reset by administrator.",
             is_flagged=False,
             flag_reason="",
             updated_at=timezone.now()
         )
 
+        # Reset for holidays
+        holiday_attendances = attendances.filter(date__in=holiday_dates)
+        for att in holiday_attendances:
+            h_name = Holiday.objects.filter(date=att.date).first().name
+            att.status = Attendance.STATUS_HOLIDAY
+            att.total_work_seconds = 0
+            att.total_break_seconds = 0
+            att.total_idle_seconds = 0
+            att.manager_remark = f"Holiday: {h_name}"
+            att.is_flagged = False
+            att.flag_reason = ""
+            att.updated_at = timezone.now()
+            att.save()
+
         # 4. Log action
+        target_info = f"Employee ID: {employee_id}" if scope == 'particular' else "All Employees"
+        date_range_info = f"{start_date} to {end_date}"
         AuditService.log(
             request.user, 'update',
-            f'Administrative reset of all attendance sessions for {date_str}',
+            f'Administrative reset of sessions for {target_info} (Range: {date_range_info})',
             request,
-            extra_data={'date': date_str, 'records_affected': count}
+            extra_data={'start_date': str(start_date), 'end_date': str(end_date), 'scope': scope, 'employee_id': employee_id, 'records_affected': count}
         )
 
         # 5. Broadcast status change (so users see they are clocked out)
@@ -1448,7 +1545,7 @@ class AttendancePolicyViewSet(viewsets.ModelViewSet):
 
         return Response({
             'status': 'success',
-            'message': f'Successfully reset {count} attendance sessions for {date_str}.'
+            'message': f'Successfully reset {count} attendance sessions.'
         })
 
 
@@ -1615,6 +1712,7 @@ class ExportView(APIView):
 
         category = request.query_params.get('category')
         user_id = request.query_params.get('user_id')
+        shift = request.query_params.get('shift')
 
         if category == 'employees':
             qs = qs.filter(user__role='employee')
@@ -1622,6 +1720,14 @@ class ExportView(APIView):
             qs = qs.filter(user__role='manager')
         elif category == 'particular_employee' and user_id:
             qs = qs.filter(user_id=user_id)
+
+        # Robust shift filtering (checking both shift and category query params case-insensitively)
+        shift_param = (shift or '').lower()
+        cat_param = (category or '').lower()
+        if 'morning' in shift_param or 'morning' in cat_param:
+            qs = qs.filter(user__shift__name__icontains='morning')
+        elif 'night' in shift_param or 'night' in cat_param:
+            qs = qs.filter(user__shift__name__icontains='night')
 
         # Filters using date or full datetime for precision
         if start_dt:
@@ -1698,6 +1804,14 @@ class ExportView(APIView):
             users = users.filter(role='manager')
         elif category == 'particular_employee' and user_id:
             users = users.filter(id=user_id)
+            
+        # Robust shift filtering (checking both shift and category query params case-insensitively)
+        shift_param = (request.query_params.get('shift') or '').lower()
+        cat_param = (category or '').lower()
+        if 'morning' in shift_param or 'morning' in cat_param:
+            users = users.filter(shift__name__icontains='morning')
+        elif 'night' in shift_param or 'night' in cat_param:
+            users = users.filter(shift__name__icontains='night')
             
         users = users.distinct()
 
@@ -1892,11 +2006,20 @@ class ExportView(APIView):
         if file_format == 'xlsx':
             return self._to_xlsx(
                 payroll_data,
-                ['Employee ID', 'Email', 'Name', 'Department', 'Role', 'Payable Days', 'Present Days', 'Paid Leave Days', 'Reimbursable Expenses'],
+                [
+                    'Employee ID', 'Email', 'Name', 'Department', 'Role', 
+                    'Payable Days', 'Present Days', 'Paid Leave Days', 
+                    'Regular Hours', 'Overtime Hours', 'Night Hours',
+                    'Base Earnings', 'Overtime Earnings', 'Night Differential Earnings', 
+                    'Reimbursable Expenses', 'Total Earnings'
+                ],
                 lambda p: [
                     p['employee_id'], p['email'], p['name'], p['department'],
                     p['role'], p['payable_days'], p['present_days'],
-                    p['paid_leave_days'], p['reimbursable_expenses']
+                    p['paid_leave_days'], p['regular_hours'], p['overtime_hours'],
+                    p['night_hours'], p['base_earnings'], p['overtime_earnings'],
+                    p['night_differential_earnings'], p['reimbursable_expenses'],
+                    p['total_earnings']
                 ],
                 f'payroll_{year}_{month:02d}.xlsx'
             )
@@ -1904,12 +2027,21 @@ class ExportView(APIView):
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = f'attachment; filename="payroll_{year}_{month:02d}.csv"'
         writer = csv.writer(response)
-        writer.writerow(['Employee ID', 'Email', 'Name', 'Department', 'Role', 'Payable Days', 'Present Days', 'Paid Leave Days', 'Reimbursable Expenses'])
+        writer.writerow([
+            'Employee ID', 'Email', 'Name', 'Department', 'Role', 
+            'Payable Days', 'Present Days', 'Paid Leave Days', 
+            'Regular Hours', 'Overtime Hours', 'Night Hours',
+            'Base Earnings', 'Overtime Earnings', 'Night Differential Earnings', 
+            'Reimbursable Expenses', 'Total Earnings'
+        ])
         for p in payroll_data:
             writer.writerow([
                 p['employee_id'], p['email'], p['name'], p['department'],
                 p['role'], p['payable_days'], p['present_days'],
-                p['paid_leave_days'], p['reimbursable_expenses']
+                p['paid_leave_days'], p['regular_hours'], p['overtime_hours'],
+                p['night_hours'], p['base_earnings'], p['overtime_earnings'],
+                p['night_differential_earnings'], p['reimbursable_expenses'],
+                p['total_earnings']
             ])
         return response
 

@@ -1,3 +1,5 @@
+import { useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
 import { 
   CheckCircleIcon, 
   MinusCircleIcon, 
@@ -6,6 +8,9 @@ import {
 } from '@heroicons/react/24/solid';
 
 const StatusBadge = ({ status }) => {
+  const { user, isWithinShift } = useContext(AuthContext);
+  const isOutside = user?.role === 'employee' && !isWithinShift;
+
   const config = {
     working: {
       color: 'text-emerald-400',

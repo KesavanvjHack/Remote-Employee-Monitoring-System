@@ -7,10 +7,10 @@ const OrganizationManagement = () => {
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  // Department Modal State
+  const [isDeptModalOpen, setIsDeptModalOpen] = useState(false);
   const [editingDepartment, setEditingDepartment] = useState(null);
-  const [formData, setFormData] = useState({
+  const [deptFormData, setDeptFormData] = useState({
     name: '',
     description: '',
   });
@@ -24,28 +24,29 @@ const OrganizationManagement = () => {
       const deptsRes = await api.get('/departments/');
       setDepartments(deptsRes.data.results || deptsRes.data);
     } catch (error) {
-      toast.error('Failed to load departments');
+      toast.error('Failed to load department data');
     } finally {
       setLoading(false);
     }
   };
 
-  const openAddModal = () => {
+  // Department Handlers
+  const openAddDeptModal = () => {
     setEditingDepartment(null);
-    setFormData({ name: '', description: '' });
-    setIsModalOpen(true);
+    setDeptFormData({ name: '', description: '' });
+    setIsDeptModalOpen(true);
   };
 
-  const openEditModal = (department) => {
+  const openEditDeptModal = (department) => {
     setEditingDepartment(department);
-    setFormData({
+    setDeptFormData({
       name: department.name,
       description: department.description || '',
     });
-    setIsModalOpen(true);
+    setIsDeptModalOpen(true);
   };
 
-  const handleDelete = async (id) => {
+  const handleDeptDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this department?")) {
       try {
         await api.delete(`/departments/${id}/`);
@@ -57,25 +58,17 @@ const OrganizationManagement = () => {
     }
   };
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-
-  const handleSubmit = async (e) => {
+  const handleDeptSubmit = async (e) => {
     e.preventDefault();
     try {
       if (editingDepartment) {
-        await api.patch(`/departments/${editingDepartment.id}/`, formData);
+        await api.patch(`/departments/${editingDepartment.id}/`, deptFormData);
         toast.success('Department updated successfully');
       } else {
-        await api.post('/departments/', formData);
+        await api.post('/departments/', deptFormData);
         toast.success('Department created successfully');
       }
-      setIsModalOpen(false);
+      setIsDeptModalOpen(false);
       fetchData();
     } catch (error) {
        toast.error(error.response?.data?.detail || JSON.stringify(error.response?.data) || 'Failed to save department');
@@ -86,16 +79,21 @@ const OrganizationManagement = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center gap-4 mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">Organization Management</h1>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">Organization Management</h1>
+          <p className="text-slate-400 text-sm mt-1">Manage corporate departments.</p>
+        </div>
+        
         <button 
-           onClick={openAddModal}
-           className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 sm:py-2.5 rounded-lg font-medium shadow-[0_0_15px_rgba(99,102,241,0.3)] transition-all flex items-center justify-center gap-2 whitespace-nowrap w-auto">
-          <span className="text-lg">+</span> <span className="hidden sm:inline">Add Department</span><span className="sm:hidden">Add</span>
+           onClick={openAddDeptModal}
+           className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 sm:py-2.5 rounded-lg font-medium shadow-[0_0_15px_rgba(99,102,241,0.3)] transition-all flex items-center justify-center gap-2 whitespace-nowrap w-auto self-start sm:self-auto">
+          <span>+</span> <span>Add Department</span>
         </button>
       </div>
 
-      <div className="bg-slate-800/50 border border-slate-700 rounded-2xl overflow-hidden">
+      <div className="bg-slate-800/50 border border-slate-700 rounded-2xl overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-slate-300">
             <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
@@ -112,12 +110,12 @@ const OrganizationManagement = () => {
                   <td className="px-6 py-4">{dept.description || '-'}</td>
                   <td className="px-6 py-4 text-right">
                     <button 
-                       onClick={() => openEditModal(dept)}
+                       onClick={() => openEditDeptModal(dept)}
                        className="text-indigo-400 hover:text-indigo-300 p-2 rounded-lg hover:bg-indigo-500/10 transition-colors">
                       <PencilSquareIcon className="h-5 w-5" />
                     </button>
                     <button 
-                       onClick={() => handleDelete(dept.id)}
+                       onClick={() => handleDeptDelete(dept.id)}
                        className="text-rose-400 hover:text-rose-300 p-2 rounded-lg hover:bg-rose-500/10 transition-colors ml-2">
                       <TrashIcon className="h-5 w-5" />
                     </button>
@@ -135,26 +133,23 @@ const OrganizationManagement = () => {
       </div>
 
       {/* Dept Modal */}
-      {isModalOpen && (
+      {isDeptModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <h2 className="text-xl font-bold text-slate-200 mb-4">{editingDepartment ? 'Edit Department' : 'Add Department'}</h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              
+            <form onSubmit={handleDeptSubmit} className="space-y-4">
               <div>
                 <label htmlFor="deptName" className="block text-sm font-medium text-slate-400 mb-1">Department Name *</label>
-                <input required type="text" id="deptName" name="name" value={formData.name} onChange={handleChange}
+                <input required type="text" id="deptName" name="name" value={deptFormData.name} onChange={(e) => setDeptFormData({...deptFormData, name: e.target.value})}
                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
               </div>
-
               <div>
                 <label htmlFor="deptDescription" className="block text-sm font-medium text-slate-400 mb-1">Description</label>
-                <textarea id="deptDescription" name="description" value={formData.description} onChange={handleChange} rows={3}
+                <textarea id="deptDescription" name="description" value={deptFormData.description} onChange={(e) => setDeptFormData({...deptFormData, description: e.target.value})} rows={3}
                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
               </div>
-
               <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-slate-700">
-                <button type="button" onClick={() => setIsModalOpen(false)}
+                <button type="button" onClick={() => setIsDeptModalOpen(false)}
                         className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-lg transition-colors">
                   Cancel
                 </button>
@@ -172,3 +167,4 @@ const OrganizationManagement = () => {
 };
 
 export default OrganizationManagement;
+

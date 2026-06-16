@@ -47,11 +47,13 @@ const WorkSession = () => {
     if (shiftEnd <= shiftStart) {
         shiftEnd.setDate(shiftEnd.getDate() + 1);
         
-        // If current time is early morning (e.g. 1 AM) and shift started yesterday, adjust start
+        // If current time is early morning (e.g. 1 AM) and shift started yesterday, adjust start and end
         if (now < shiftStart && now < shiftEnd) {
             const yesterdayStart = new Date(shiftStart);
             yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-            if (now >= yesterdayStart) {
+            const yesterdayEnd = new Date(shiftEnd);
+            yesterdayEnd.setDate(yesterdayEnd.getDate() - 1);
+            if (now >= yesterdayStart && now <= yesterdayEnd) {
                 // We are inside the overnight shift from yesterday!
                 return false; 
             }
@@ -133,9 +135,22 @@ const WorkSession = () => {
     if (!policy?.shift_end_time || loading || isCheckingOutRef.current) return;
     if (status !== 'working' && status !== 'idle') return;
 
+    const [sH, sM] = (policy.shift_start_time || '09:30').split(':').map(Number);
+    const shiftStart = new Date(now);
+    shiftStart.setHours(sH, sM, 0, 0);
+
     const [endH, endM] = policy.shift_end_time.split(':').map(Number);
-    const shiftEnd = new Date(now);
+    let shiftEnd = new Date(now);
     shiftEnd.setHours(endH, endM, 0, 0);
+
+    if (shiftEnd <= shiftStart) {
+      shiftEnd.setDate(shiftEnd.getDate() + 1);
+      
+      // If we are currently in the early morning part (e.g. 1 AM today) of the shift that started yesterday:
+      if (now < shiftStart && now < shiftEnd) {
+        shiftEnd.setDate(shiftEnd.getDate() - 1);
+      }
+    }
 
     if (now >= shiftEnd) {
       isCheckingOutRef.current = true; // Lock

@@ -34,39 +34,95 @@ class RoleSerializer(serializers.ModelSerializer):
 class UserListSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source='department.name', read_only=True, default=None)
     manager_name = serializers.SerializerMethodField()
+    shift_name = serializers.CharField(source='shift.name', read_only=True, default=None)
+    shift_start_time = serializers.SerializerMethodField()
+    shift_end_time = serializers.SerializerMethodField()
+    idle_threshold_minutes = serializers.SerializerMethodField()
+    session_timeout_hours = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name',
             'role', 'department', 'department_name',
-            'manager', 'manager_name', 'phone', 'is_active',
+            'manager', 'manager_name', 'shift', 'shift_name', 'phone', 'is_active',
             'is_online', 'last_seen',
             'date_joined', 'created_at',
+            'shift_start_time', 'shift_end_time', 'idle_threshold_minutes', 'session_timeout_hours',
         ]
         read_only_fields = ['id', 'full_name', 'date_joined', 'created_at']
 
     def get_manager_name(self, obj):
         return obj.manager.full_name if obj.manager else None
 
+    def get_shift_start_time(self, obj):
+        from core.services import get_user_policy, get_user_shift_times
+        policy = get_user_policy(obj)
+        s_time, _ = get_user_shift_times(obj, policy)
+        return s_time.strftime('%H:%M:%S') if s_time else '09:30:00'
+
+    def get_shift_end_time(self, obj):
+        from core.services import get_user_policy, get_user_shift_times
+        policy = get_user_policy(obj)
+        _, e_time = get_user_shift_times(obj, policy)
+        return e_time.strftime('%H:%M:%S') if e_time else '17:30:00'
+
+    def get_idle_threshold_minutes(self, obj):
+        from core.services import get_user_policy
+        policy = get_user_policy(obj)
+        return policy.idle_threshold_minutes if policy else 15
+
+    def get_session_timeout_hours(self, obj):
+        from core.services import get_user_policy
+        policy = get_user_policy(obj)
+        return policy.session_timeout_hours if policy else 24
+
 
 class UserDetailSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source='department.name', read_only=True, default=None)
     manager_name = serializers.SerializerMethodField()
+    shift_name = serializers.CharField(source='shift.name', read_only=True, default=None)
+    shift_start_time = serializers.SerializerMethodField()
+    shift_end_time = serializers.SerializerMethodField()
+    idle_threshold_minutes = serializers.SerializerMethodField()
+    session_timeout_hours = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name',
             'role', 'department', 'department_name',
-            'manager', 'manager_name', 'phone', 'is_active',
+            'manager', 'manager_name', 'shift', 'shift_name', 'phone', 'is_active',
             'is_online', 'last_seen',
             'date_joined', 'created_at', 'updated_at',
+            'shift_start_time', 'shift_end_time', 'idle_threshold_minutes', 'session_timeout_hours',
         ]
         read_only_fields = ['id', 'full_name', 'date_joined', 'created_at', 'updated_at']
 
     def get_manager_name(self, obj):
         return obj.manager.full_name if obj.manager else None
+
+    def get_shift_start_time(self, obj):
+        from core.services import get_user_policy, get_user_shift_times
+        policy = get_user_policy(obj)
+        s_time, _ = get_user_shift_times(obj, policy)
+        return s_time.strftime('%H:%M:%S') if s_time else '09:30:00'
+
+    def get_shift_end_time(self, obj):
+        from core.services import get_user_policy, get_user_shift_times
+        policy = get_user_policy(obj)
+        _, e_time = get_user_shift_times(obj, policy)
+        return e_time.strftime('%H:%M:%S') if e_time else '17:30:00'
+
+    def get_idle_threshold_minutes(self, obj):
+        from core.services import get_user_policy
+        policy = get_user_policy(obj)
+        return policy.idle_threshold_minutes if policy else 15
+
+    def get_session_timeout_hours(self, obj):
+        from core.services import get_user_policy
+        policy = get_user_policy(obj)
+        return policy.session_timeout_hours if policy else 24
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -77,7 +133,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'email', 'first_name', 'last_name', 'role',
-            'department', 'manager', 'phone',
+            'department', 'manager', 'shift', 'phone',
             'password', 'confirm_password',
         ]
 
@@ -98,8 +154,8 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'first_name', 'last_name', 'role',
-            'department', 'manager', 'phone', 'is_active',
+            'email', 'first_name', 'last_name', 'role',
+            'department', 'manager', 'shift', 'phone', 'is_active',
         ]
 
 
@@ -129,9 +185,11 @@ class AttendancePolicySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'min_working_hours', 'present_hours', 'half_day_hours',
             'idle_threshold_minutes', 'shift_start_time', 'shift_end_time',
-            'session_timeout_hours', 'is_active', 'department', 'created_at', 'updated_at',
+            'session_timeout_hours', 'base_hourly_rate', 'overtime_rate_multiplier',
+            'night_differential_multiplier', 'is_active', 'department', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
 
 
 # ── Attendance ─────────────────────────────────────────────────────────────────
@@ -140,6 +198,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
     user_email = serializers.CharField(source='user.email', read_only=True)
     user_name = serializers.CharField(source='user.full_name', read_only=True)
     user_role = serializers.CharField(source='user.role', read_only=True)
+    shift_name = serializers.CharField(source='user.shift.name', read_only=True, default=None)
+    manager_name = serializers.CharField(source='user.manager.full_name', read_only=True, default=None)
     
     total_work_seconds = serializers.SerializerMethodField()
     total_break_seconds = serializers.SerializerMethodField()
@@ -158,6 +218,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
         model = Attendance
         fields = [
             'id', 'user', 'user_email', 'user_name', 'user_role',
+            'shift_name', 'manager_name',
             'date', 'status', 'live_status', 'first_login', 'last_logout',
             'shift_start', 'shift_end',
             'total_work_seconds', 'total_break_seconds', 'total_idle_seconds',
@@ -255,11 +316,14 @@ class AttendanceSerializer(serializers.ModelSerializer):
         target_seconds = float(policy.min_working_hours) * 3600
         att_date = obj.date 
         tz = django_timezone.get_current_timezone()
-        shift_start = django_timezone.make_aware(datetime.datetime.combine(att_date, policy.shift_start_time), tz)
-        shift_end = django_timezone.make_aware(datetime.datetime.combine(att_date, policy.shift_end_time), tz)
+        from core.services import get_user_shift_times
+        s_time, e_time = get_user_shift_times(obj.user, policy)
+        shift_start = django_timezone.make_aware(datetime.datetime.combine(att_date, s_time), tz)
+        shift_end = django_timezone.make_aware(datetime.datetime.combine(att_date, e_time), tz)
         
         if shift_end <= shift_start: 
             shift_end += datetime.timedelta(days=1)
+
             
         # 2. Daily Requirement Progress
         now = django_timezone.now()
@@ -306,14 +370,16 @@ class AttendanceSerializer(serializers.ModelSerializer):
         return last_ended.end_time.isoformat()
 
     def get_shift_start(self, obj):
-        from core.services import get_user_policy
+        from core.services import get_user_policy, get_user_shift_times
         policy = get_user_policy(obj.user)
-        return policy.shift_start_time.strftime('%I:%M %p') if policy else "09:30 AM"
+        s_time, _ = get_user_shift_times(obj.user, policy)
+        return s_time.strftime('%I:%M %p')
 
     def get_shift_end(self, obj):
-        from core.services import get_user_policy
+        from core.services import get_user_policy, get_user_shift_times
         policy = get_user_policy(obj.user)
-        return policy.shift_end_time.strftime('%I:%M %p') if policy else "05:30 PM"
+        _, e_time = get_user_shift_times(obj.user, policy)
+        return e_time.strftime('%I:%M %p')
 
     def get_has_completed_session(self, obj):
         # Use prefetched work_sessions if available

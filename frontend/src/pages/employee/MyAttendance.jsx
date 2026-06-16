@@ -7,6 +7,26 @@ import { formatDecimalHours } from '../../utils/format';
 import LiveDuration from '../../components/LiveDuration';
 import { AuthContext } from '../../context/AuthContext';
 
+const parseTime12hToMinutes = (time12h) => {
+  if (!time12h) return 0;
+  const match = time12h.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toUpperCase();
+  if (period === 'PM' && hours < 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+};
+
+const format24hTo12h = (time24h) => {
+  if (!time24h) return '09:30 AM';
+  const [h, m] = time24h.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 || 12;
+  return `${hour12.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${period}`;
+};
+
 const MyAttendance = () => {
   const [attendance, setAttendance] = useState([]);
   const [holidays, setHolidays] = useState([]);
@@ -280,20 +300,35 @@ const MyAttendance = () => {
                 const now = new Date();
                 const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
                 const istDate = new Date(istString);
-                const currentMinutes = istDate.getHours() * 60 + istDate.getMinutes();
-                const [endHour, endMin] = (policy?.shift_end_time || '17:30').split(':').map(Number);
-                const shiftEndMinutes = endHour * 60 + endMin;
-                const isBeforeShiftEnd = currentMinutes < shiftEndMinutes;
 
-                const [startHour, startMin] = (policy?.shift_start_time || '09:30').split(':').map(Number);
-                const shiftStartMinutes = startHour * 60 + startMin;
-                const isBeforeShiftStart = currentMinutes < shiftStartMinutes;
+                const [recYear, recMonth, recDay] = record.date.split('-').map(Number);
+                const shiftStartDate = new Date(recYear, recMonth - 1, recDay);
+                const startMin = parseTime12hToMinutes(record.shift_start || (policy?.shift_start_time ? format24hTo12h(policy.shift_start_time) : '09:30 AM'));
+                shiftStartDate.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
 
-                const isCalculating = record.date === todayStr && 
+                const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
+                const endMin = parseTime12hToMinutes(record.shift_end || (policy?.shift_end_time ? format24hTo12h(policy.shift_end_time) : '05:30 PM'));
+                shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+                if (endMin <= startMin) {
+                  shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+                }
+
+                const isBeforeShiftStart = istDate < shiftStartDate;
+                const isBeforeShiftEnd = istDate < shiftEndDate;
+
+                const isToday = record.date === todayStr;
+                const yesterday = new Date(istDate);
+                yesterday.setDate(yesterday.getDate() - 1);
+                const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+                const isRecordActive = isToday || (record.date === yesterdayStr && endMin <= startMin);
+
+                const isCalculating = isRecordActive && 
                                     isBeforeShiftEnd &&
                                     record.status !== 'present' && 
                                     record.status !== 'on_leave' && 
-                                    record.status !== 'holiday';
+                                    record.status !== 'holiday' &&
+                                    record.status !== 'half_day';
                                     
                 let displayStatus = record.status;
                 let isNotStarted = false;
@@ -302,7 +337,7 @@ const MyAttendance = () => {
                     displayStatus = 'Not Started';
                     isNotStarted = true;
                   } else {
-                    displayStatus = 'calculating...';
+                    displayStatus = 'Calculating...';
                   }
                 }
                 
@@ -314,7 +349,7 @@ const MyAttendance = () => {
                   </td>
                   <td className="px-4 py-2.5 text-center">
                     <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider
-                      ${isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20') :
+                      ${isCalculating ? (isNotStarted ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20') :
                         record.status === 'present' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
                         record.status === 'half_day' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
                         record.status === 'absent' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
@@ -325,7 +360,7 @@ const MyAttendance = () => {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-center font-mono leading-tight whitespace-nowrap">
-                    <span className="block text-indigo-400 text-[10px] font-bold">
+                    <span className={`block text-[10px] font-bold ${isCalculating ? 'text-rose-400' : 'text-indigo-400'}`}>
                       {record.first_login ? format(new Date(record.first_login), 'hh:mm:ss a') : '--:--:--'}
                     </span>
                     <span className="block text-slate-600 text-[9px] my-0.5">to</span>

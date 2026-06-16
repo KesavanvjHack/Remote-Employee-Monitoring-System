@@ -206,8 +206,22 @@ export const AuthProvider = ({ children }) => {
       const policies = policyRes.data.results || policyRes.data;
       const activePolicy = policies.find(p => p.is_active) || policies[0];
       if (activePolicy) {
-        setIdleThreshold(activePolicy.idle_threshold_minutes);
-        setPolicy(activePolicy);
+        // Resolve policy details from user if available, otherwise fallback to global active policy
+        const cachedUserStr = localStorage.getItem('rems_user_cache');
+        const cachedUser = cachedUserStr ? JSON.parse(cachedUserStr) : null;
+        if (cachedUser && cachedUser.shift_start_time) {
+          setIdleThreshold(cachedUser.idle_threshold_minutes || activePolicy.idle_threshold_minutes);
+          setPolicy({
+            ...activePolicy,
+            shift_start_time: cachedUser.shift_start_time,
+            shift_end_time: cachedUser.shift_end_time,
+            idle_threshold_minutes: cachedUser.idle_threshold_minutes || activePolicy.idle_threshold_minutes,
+            session_timeout_hours: cachedUser.session_timeout_hours || activePolicy.session_timeout_hours,
+          });
+        } else {
+          setIdleThreshold(activePolicy.idle_threshold_minutes);
+          setPolicy(activePolicy);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch idle threshold', err);
@@ -256,13 +270,16 @@ export const AuthProvider = ({ children }) => {
       const res = await api.post('/auth/login/', { email, password, otp });
       localStorage.setItem('access_token', res.data.access);
       localStorage.setItem('refresh_token', res.data.refresh);
-      localStorage.setItem('rems_user_cache', JSON.stringify(res.data.user));
-      setUser(res.data.user);
       
-      const role = res.data.user.role;
+      // Fetch full user details from /auth/me/ to get correct shift times
+      const meRes = await api.get('/auth/me/');
+      localStorage.setItem('rems_user_cache', JSON.stringify(meRes.data));
+      setUser(meRes.data);
+      
+      const role = meRes.data.role;
       toast.success('Login Successful');
       fetchInitialStatuses(role);
-      connectWebSocket(res.data.user);
+      connectWebSocket(meRes.data);
       return role; 
     } catch (error) {
       const msg = error.response?.data?.detail || 'Invalid credentials';
@@ -396,6 +413,10 @@ export const AuthProvider = ({ children }) => {
 
   // Global Shift Window Watcher
   useEffect(() => {
+    if (user && user.role !== 'employee') {
+        setIsWithinShift(true);
+        return;
+    }
     if (!policy?.shift_start_time || !policy?.shift_end_time) {
         setIsWithinShift(true);
         return;
@@ -406,8 +427,28 @@ export const AuthProvider = ({ children }) => {
         const [sH, sM] = policy.shift_start_time.split(':').map(Number);
         const [eH, eM] = policy.shift_end_time.split(':').map(Number);
         const start = new Date(now).setHours(sH, sM, 0, 0);
-        const end = new Date(now).setHours(eH, eM, 0, 0);
-        const within = now >= start && now <= end;
+        let end = new Date(now).setHours(eH, eM, 0, 0);
+        
+        let within = false;
+        if (end <= start) {
+            // Overnight shift
+            const endNextDay = new Date(end);
+            endNextDay.setDate(endNextDay.getDate() + 1);
+            
+            // Check if current time is within today's start and tomorrow's end
+            const withinTodayStartTomorrowEnd = now >= start && now <= endNextDay;
+            
+            // Also check if current time is within yesterday's start and today's end (early morning)
+            const startYesterday = new Date(start);
+            startYesterday.setDate(startYesterday.getDate() - 1);
+            const endToday = new Date(end);
+            const withinYesterdayStartTodayEnd = now >= startYesterday && now <= endToday;
+            
+            within = withinTodayStartTomorrowEnd || withinYesterdayStartTodayEnd;
+        } else {
+            within = now >= start && now <= end;
+        }
+
         if (within !== isWithinShift) {
             setIsWithinShift(within);
         }
@@ -416,7 +457,7 @@ export const AuthProvider = ({ children }) => {
     checkShift();
     const interval = setInterval(checkShift, 30000); // Check every 30s
     return () => clearInterval(interval);
-  }, [policy, isWithinShift]);
+  }, [policy, isWithinShift, user]);
 
   const value = {
     user,
