@@ -19,7 +19,12 @@ export const AuthProvider = ({ children }) => {
   const [liveStatuses, setLiveStatuses] = useState({});
   const [idleThreshold, setIdleThreshold] = useState(15); // Default 15 mins
   const [policy, setPolicy] = useState(null);
-  const [status, setStatus] = useState('offline');
+  const [status, setStatusRaw] = useState(() => {
+    return localStorage.getItem('rems_current_status') || 'offline';
+  });
+  // Per-user WS/action lock: Map<userId_lower, expiryTimestamp>
+  // Prevents stale HTTP polls from overwriting fresh WS/action status for 12s
+  const wsLockMapRef = useRef(new Map());
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [showWarning, setShowWarning] = useState(false);
   const [warningTimeLeft, setWarningTimeLeft] = useState('');
@@ -30,6 +35,41 @@ export const AuthProvider = ({ children }) => {
   const wsRef = useRef(null);
   const heartbeatRef = useRef(null);
   const lastActivityRef = useRef(Date.now());
+  const currentUserRef = useRef(null); // Always-current user ref for WS closures
+
+  // Smart status setter — uses per-user wsLockMapRef to prevent HTTP poll flicker.
+  // Source priority: 'action' (user click) > 'ws' (WebSocket) > 'http' (poll).
+  // NOTE: 'ws' source does NOT call this function directly; the WS onmessage handler
+  // updates liveStatuses and setStatusRaw directly to avoid double-writes.
+  const setStatus = useCallback((newStatus, source = 'action') => {
+    let myIdLower = null;
+    try {
+      const cachedUserStr = localStorage.getItem('rems_user_cache');
+      if (cachedUserStr) {
+        const cachedUser = JSON.parse(cachedUserStr);
+        myIdLower = String(cachedUser.id || '').toLowerCase() || null;
+      }
+    } catch (e) {}
+
+    if (myIdLower) {
+      const lockExpiry = wsLockMapRef.current.get(myIdLower) || 0;
+      if (source === 'http') {
+        // Stale HTTP: blocked if a WS/action lock is still active for this user
+        if (Date.now() < lockExpiry) return;
+      } else {
+        // 'action' source: refresh the per-user lock for 12 seconds
+        wsLockMapRef.current.set(myIdLower, Date.now() + 12000);
+        // Optimistically update liveStatuses for self immediately
+        setLiveStatuses(prev => ({
+          ...prev,
+          [myIdLower]: { status: newStatus, source: 'action', timestamp: Date.now() },
+        }));
+      }
+    }
+
+    setStatusRaw(newStatus);
+    localStorage.setItem('rems_current_status', newStatus);
+  }, []);
   // Real-time Idle Logic: Derived from the Attendance Policy (minutes -> seconds)
   const getIdleThreshold = useCallback(() => {
     return (policy?.idle_threshold_minutes || 15) * 60;
@@ -55,26 +95,32 @@ export const AuthProvider = ({ children }) => {
       ws.onopen = () => {
         console.log('Status WebSocket Connected');
         reconnectAttemptsRef.current = 0; // Reset on success
-        if (currentUser) {
-          ws.send(JSON.stringify({ type: 'presence', user_id: currentUser.id }));
+        const activeUser = currentUserRef.current;
+        if (activeUser) {
+          ws.send(JSON.stringify({ type: 'presence', user_id: activeUser.id }));
           heartbeatRef.current = setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'presence', user_id: currentUser.id }));
+              ws.send(JSON.stringify({ type: 'presence', user_id: activeUser.id }));
             }
-          }, 30000);
+          }, 10000); // 10s — fast heartbeat, safely within 35s TTL
         }
       };
 
       ws.onclose = () => {
         console.log('Status WebSocket Disconnected');
-        disconnectWebSocket();
+        wsRef.current = null;
+        if (heartbeatRef.current) {
+          clearInterval(heartbeatRef.current);
+          heartbeatRef.current = null;
+        }
         
-        // Auto-reconnect with exponential backoff
+        // Auto-reconnect with exponential backoff (use ref to get current user)
         if (reconnectAttemptsRef.current < 5) {
             const delay = Math.pow(2, reconnectAttemptsRef.current) * 1000;
             setTimeout(() => {
                 reconnectAttemptsRef.current += 1;
-                connectWebSocket(currentUser);
+                const latestUser = currentUserRef.current;
+                if (latestUser) connectWebSocket(latestUser);
             }, delay);
         }
       };
@@ -88,13 +134,25 @@ export const AuthProvider = ({ children }) => {
         }
 
         if (data.type === 'status_update') {
-          setLiveStatuses(prev => ({
-            ...prev,
-            [data.user_id]: data.status
-          }));
-          // If the status update is for the currently logged in user, update the global status
-          if (currentUser && data.user_id === currentUser.id) {
-              setStatus(data.status);
+          const userIdLower = String(data.user_id || '').toLowerCase();
+          
+          // Set a 12-second WS lock for this user so HTTP polls cannot overwrite this
+          wsLockMapRef.current.set(userIdLower, Date.now() + 12000);
+
+          // Single authoritative write to liveStatuses (no-op if status unchanged)
+          setLiveStatuses(prev => {
+            if (prev[userIdLower]?.status === data.status && prev[userIdLower]?.source === 'ws') return prev;
+            return {
+              ...prev,
+              [userIdLower]: { status: data.status, source: 'ws', timestamp: Date.now() }
+            };
+          });
+
+          // If it's the current user, update personal status state directly
+          // (NOT via setStatus() to avoid a second liveStatuses write)
+          if (currentUserRef.current && userIdLower === String(currentUserRef.current.id).toLowerCase()) {
+              setStatusRaw(data.status);
+              localStorage.setItem('rems_current_status', data.status);
               window.dispatchEvent(new CustomEvent('statusChange', { detail: data.status }));
           }
         } else if (data.type === 'policy_update') {
@@ -156,14 +214,10 @@ export const AuthProvider = ({ children }) => {
         }
       };
 
-      ws.onclose = () => {
-        wsRef.current = null;
-        console.log('Status WebSocket Disconnected');
-      };
-      
       wsRef.current = ws;
     } catch (err) {
-      console.error('Failed to connect to status websocket', err);
+      if (err.name === 'CanceledError' || err.name === 'AbortError') return;
+      console.error('Failed to load global policy', err);
     }
   }, []);
 
@@ -179,30 +233,68 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       localStorage.removeItem('rems_user_cache');
+      localStorage.removeItem('rems_current_status');
       setUser(null);
+      setStatusRaw('offline');
       disconnectWebSocket();
       setLiveStatuses({});
       window.location.href = '/login';
     }
   }, [disconnectWebSocket]);
 
+  const fetchInitialStatusesAbortRef = useRef(null);
+
   const fetchInitialStatuses = useCallback(async (role) => {
+    if (fetchInitialStatusesAbortRef.current) {
+      fetchInitialStatusesAbortRef.current.abort();
+    }
+    fetchInitialStatusesAbortRef.current = new AbortController();
+    const signal = fetchInitialStatusesAbortRef.current.signal;
+
     if (role === 'admin' || role === 'manager') {
       try {
-        const res = await api.get('/status/team/');
+        const res = await api.get('/status/team/', { signal });
         const team = res.data.results || res.data;
-        const initial = {};
-        team.forEach(member => {
-          initial[member.user_id] = member.status;
+        setLiveStatuses(prev => {
+          const next = { ...prev };
+          team.forEach(member => {
+            const memberIdLower = (member.user_id || '').toLowerCase();
+            // Per-user WS/action lock: skip HTTP if a fresh WS/action update arrived within 12s
+            const lockExpiry = wsLockMapRef.current.get(memberIdLower) || 0;
+            if (Date.now() >= lockExpiry) {
+              next[memberIdLower] = { status: member.status, source: 'http', timestamp: Date.now() };
+            }
+            // else: lock is active — keep the WS/action status, discard stale HTTP
+          });
+          return next;
         });
-        setLiveStatuses(initial);
       } catch (err) {
+        if (err.name === 'CanceledError' || err.name === 'AbortError') return;
         console.error('Failed to prepare initial live statuses', err);
+      }
+    } else if (role === 'employee') {
+      // For employees, seed their own status in liveStatuses from /status/me/
+      try {
+        const res = await api.get('/status/me/', { signal });
+        const myIdLower = String(res.data.user_id || '').toLowerCase();
+        if (myIdLower) {
+          const lockExpiry = wsLockMapRef.current.get(myIdLower) || 0;
+          if (Date.now() >= lockExpiry) {
+            // No active WS/action lock — safe to seed from HTTP
+            setLiveStatuses(prev => ({
+              ...prev,
+              [myIdLower]: { status: res.data.status, source: 'http', timestamp: Date.now() }
+            }));
+          }
+        }
+      } catch (err) {
+        if (err.name === 'CanceledError' || err.name === 'AbortError') return;
+        // silent — WorkSession.jsx handles its own status
       }
     }
 
     try {
-      const policyRes = await api.get('/policy/');
+      const policyRes = await api.get('/policy/', { signal });
       const policies = policyRes.data.results || policyRes.data;
       const activePolicy = policies.find(p => p.is_active) || policies[0];
       if (activePolicy) {
@@ -241,6 +333,7 @@ export const AuthProvider = ({ children }) => {
       });
       setNotifications(cleanNotifs);
     } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError') return;
       console.error('Failed to fetch notifications', err);
     }
   }, []);
@@ -251,6 +344,7 @@ export const AuthProvider = ({ children }) => {
       try {
         const res = await api.get('/auth/me/');
         setUser(res.data);
+        currentUserRef.current = res.data; // Keep ref in sync
         localStorage.setItem('rems_user_cache', JSON.stringify(res.data));
         fetchInitialStatuses(res.data.role);
         connectWebSocket(res.data);
@@ -260,6 +354,7 @@ export const AuthProvider = ({ children }) => {
     } else {
         localStorage.removeItem('rems_user_cache');
         setUser(null);
+        currentUserRef.current = null;
         setLoading(false);
     }
     setLoading(false);
@@ -275,6 +370,7 @@ export const AuthProvider = ({ children }) => {
       const meRes = await api.get('/auth/me/');
       localStorage.setItem('rems_user_cache', JSON.stringify(meRes.data));
       setUser(meRes.data);
+      currentUserRef.current = meRes.data; // Keep ref in sync
       
       const role = meRes.data.role;
       toast.success('Login Successful');
@@ -325,10 +421,9 @@ export const AuthProvider = ({ children }) => {
 
       await api.post('/sessions/idle/', payload);
       
-      // Sync local policy if we just resumed (to ensure latest thresholds)
-      if (action === 'stop') {
-          fetchInitialStatuses(user.role);
-      }
+      // Don't re-fetch team statuses after idle stop — liveStatuses is already locked
+      // and the 5s background poll will catch up safely
+      // if (action === 'stop') fetchInitialStatuses(user.role);
     } catch (err) {
       console.error('[GlobalTracking] Idle toggle failed', err);
       // Revert status on failure if it was a manual-like toggle
@@ -355,6 +450,14 @@ export const AuthProvider = ({ children }) => {
         window.removeEventListener('scroll', refreshActivity);
     };
   }, [checkUserStatus, disconnectWebSocket, refreshActivity]);
+
+  // Periodic HTTP polling fallback for liveStatuses (admin/manager only)
+  // This catches any status changes that WebSocket events may have missed
+  useEffect(() => {
+    if (!user || (user.role !== 'admin' && user.role !== 'manager')) return;
+    const interval = setInterval(() => fetchInitialStatuses(user.role), 5000); // 5s fast fallback
+    return () => clearInterval(interval);
+  }, [user, fetchInitialStatuses]);
 
   // Periodic check for inactivity timeout based on policy
   useEffect(() => {
@@ -389,6 +492,18 @@ export const AuthProvider = ({ children }) => {
     const interval = setInterval(checkTimeout, 5000); 
     return () => clearInterval(interval);
   }, [user, policy, logout, status, lastActivity, showWarning]);
+
+  // Reset activity timestamp when status becomes 'working' to give employee a fresh grace period
+  // NOTE: The liveStatuses mirror that was previously here has been REMOVED.
+  // It was a circular dependency: status change → liveStatuses write → potential re-render loop.
+  // liveStatuses is now updated ONLY by: (1) WS onmessage handler, (2) setStatus('action'),
+  // (3) fetchInitialStatuses HTTP poll (when no WS lock is active).
+  useEffect(() => {
+    if (status === 'working') {
+        lastActivityRef.current = Date.now();
+        setLastActivity(Date.now());
+    }
+  }, [status]);
 
   // GLOBAL AUTO-IDLE DETECTOR (FOR EMPLOYEES)
   useEffect(() => {

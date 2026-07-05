@@ -25,6 +25,7 @@ const WorkSession = () => {
   const [idleTicks, setIdleTicks] = useState(0);
   const [attendance, setAttendance] = useState(null);
   const [hasCheckedOutToday, setHasCheckedOutToday] = useState(false);
+  const [showCheckoutConfirm, setShowCheckoutConfirm] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [lastCaptureTime, setLastCaptureTime] = useState(null);
   const syncIntervalRef = useRef(null);
@@ -66,19 +67,17 @@ const WorkSession = () => {
   // Global Snapshot Engine handled in DashboardLayout.jsx
 
 
-  // 1. Fetch initial status on mount and listen for admin syncs
+  // 1. Fetch initial status on mount
   useEffect(() => {
     fetchStatus();
     
-    const handleSyncRequired = () => {
-        console.log('SYNC TRIGGER: Re-fetching status due to administrative change');
-        fetchStatus();
-    };
-    window.addEventListener('rems_sync_required', handleSyncRequired);
+    // NOTE: rems_sync_required listener removed intentionally.
+    // Previously this re-fetched status on every admin policy broadcast, which:
+    // 1. Called setStatus('http') which could overwrite a WS-locked status
+    // 2. Caused the status to flash offline briefly during each sync event
+    // Policy changes are handled by the 'policy_update' WS message in AuthContext directly.
 
-    return () => {
-       window.removeEventListener('rems_sync_required', handleSyncRequired);
-    };
+    return () => {};
   }, []); 
 
   // 2. Set up intervals that depend on current status and stream
@@ -184,15 +183,29 @@ const WorkSession = () => {
     try {
       const res = await api.get('/status/me/');
       fetchErrorCountRef.current = 0; // Reset on success
-      setStatus(res.data.status);
-      setAttendance(res.data.attendance);
 
-      // Check if user has already checked out today
-      if (res.data.attendance) {
-        setHasCheckedOutToday(!!res.data.attendance.has_completed_session);
-        setActiveTicks((res.data.attendance.effective_work_seconds || 0) * 10);
-        setIdleTicks((res.data.attendance.total_idle_seconds || 0) * 10);
-      } else if (res.data.status === 'offline') {
+      const httpStatus = res.data.status;
+      const att = res.data.attendance;
+
+      // ANTI-FLASH GUARD: If HTTP says 'offline' but the attendance record shows an active
+      // session (user logged in but not yet checked out), the WS presence cache may have
+      // expired briefly during a page refresh. Don't downgrade to offline immediately;
+      // the WS reconnect will broadcast the correct status within 1-2 seconds.
+      // If the user genuinely has no active session, hasActiveSession=false and offline IS applied.
+      const hasActiveSession = att && att.first_login && !att.has_completed_session;
+      if (httpStatus !== 'offline' || !hasActiveSession) {
+        setStatus(httpStatus, 'http');
+      } else {
+        console.log('[WorkSession] Anti-flash: holding status — active session detected, awaiting WS confirmation');
+      }
+
+      // Always update attendance data and counters regardless of status guard
+      setAttendance(att);
+      if (att) {
+        setHasCheckedOutToday(!!att.has_completed_session);
+        setActiveTicks((att.effective_work_seconds || 0) * 10);
+        setIdleTicks((att.total_idle_seconds || 0) * 10);
+      } else if (httpStatus === 'offline') {
         setActiveTicks(0);
         setIdleTicks(0);
         setHasCheckedOutToday(false);
@@ -237,14 +250,24 @@ const WorkSession = () => {
           await startSharing();
       }
 
+      // Optimistic UI Update for instant feedback
+      const expectedNewStatus = action === 'start' ? 'working' : 'offline';
+      setStatus(expectedNewStatus);
+      window.dispatchEvent(new CustomEvent('statusChange', { detail: expectedNewStatus }));
+
       // Proceed with API call
       const response = await api.post(`/sessions/${endpoint}/`, { action });
       
       if (response.data) {
-          const newStatus = action === 'start' ? 'working' : 'offline';
-          setStatus(newStatus);
-          window.dispatchEvent(new CustomEvent('statusChange', { detail: newStatus }));
-          await fetchStatus();
+          
+          if (response.data.attendance) {
+              setAttendance(response.data.attendance);
+              setHasCheckedOutToday(!!response.data.attendance.has_completed_session);
+              setActiveTicks((response.data.attendance.effective_work_seconds || 0) * 10);
+              setIdleTicks((response.data.attendance.total_idle_seconds || 0) * 10);
+          } else {
+              await fetchStatus();
+          }
           
           if (endpoint === 'work' && action === 'stop') {
              localStorage.removeItem('rems_active_break');
@@ -274,11 +297,18 @@ const WorkSession = () => {
       const endTime = Date.now() + (durationMins * 60 * 1000);
       localStorage.setItem('rems_active_break', JSON.stringify({ type: breakType, endTime }));
       
-      await api.post(`/sessions/break/`, { action: 'start' });
-      
+      // Optimistic Update
       setStatus('on_break');
       window.dispatchEvent(new CustomEvent('statusChange', { detail: 'on_break' }));
-      await fetchStatus();
+      
+      const response = await api.post(`/sessions/break/`, { action: 'start' });
+      if (response.data.attendance) {
+          setAttendance(response.data.attendance);
+          setActiveTicks((response.data.attendance.effective_work_seconds || 0) * 10);
+          setIdleTicks((response.data.attendance.total_idle_seconds || 0) * 10);
+      } else {
+          await fetchStatus();
+      }
       toast.success(`${breakType.charAt(0).toUpperCase() + breakType.slice(1)} break started`);
     } catch (err) {
       toast.error(err.response?.data?.error || `Failed to start break`);
@@ -292,12 +322,20 @@ const WorkSession = () => {
     try {
       setLoading(true);
       
-      await api.post(`/sessions/break/`, { action: 'stop' });
-      localStorage.removeItem('rems_active_break');
-      
+      // Optimistic Update
       setStatus('working');
       window.dispatchEvent(new CustomEvent('statusChange', { detail: 'working' }));
-      await fetchStatus();
+      
+      const response = await api.post(`/sessions/break/`, { action: 'stop' });
+      localStorage.removeItem('rems_active_break');
+      
+      if (response.data.attendance) {
+          setAttendance(response.data.attendance);
+          setActiveTicks((response.data.attendance.effective_work_seconds || 0) * 10);
+          setIdleTicks((response.data.attendance.total_idle_seconds || 0) * 10);
+      } else {
+          await fetchStatus();
+      }
       toast.success('Break ended');
     } catch (err) {
       toast.error(err.response?.data?.error || `Failed to end break`);
@@ -412,7 +450,7 @@ const WorkSession = () => {
                   </div>
                   <p className="text-sm text-slate-400 text-center">
                     You are currently in a {status} session, but screen sharing is not active. 
-                    Please share your entire screen to continue.
+                    Please share your entire screen to continue working.
                   </p>
                   <button
                     onClick={startSharing}
@@ -424,35 +462,65 @@ const WorkSession = () => {
                 </div>
               )}
 
-              <div className="flex flex-col gap-3">
-                <select 
-                  value={breakType}
-                  onChange={(e) => setBreakType(e.target.value)}
-                  disabled={loading || (user?.role !== 'admin' && isOutsideShift)}
-                  className="w-full bg-slate-900/80 border border-slate-700 rounded-2xl px-4 py-3 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 uppercase tracking-widest text-sm font-semibold disabled:opacity-50"
-                >
-                  <option value="lunch">Lunch Break (60m)</option>
-                  <option value="tea">Tea Break (15m)</option>
-                  <option value="other">Other Break (30m)</option>
-                </select>
+              {(status === 'working' || status === 'idle') && stream && (
+                <div className="flex flex-col gap-3">
+                  <select 
+                    value={breakType}
+                    onChange={(e) => setBreakType(e.target.value)}
+                    disabled={loading || (user?.role !== 'admin' && isOutsideShift)}
+                    className="w-full bg-slate-900/80 border border-slate-700 rounded-2xl px-4 py-3 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 uppercase tracking-widest text-sm font-semibold disabled:opacity-50"
+                  >
+                    <option value="lunch">Lunch Break (60m)</option>
+                    <option value="tea">Tea Break (15m)</option>
+                    <option value="other">Other Break (30m)</option>
+                  </select>
+                  <button
+                    onClick={handleBreakStart}
+                    disabled={loading || (user?.role !== 'admin' && isOutsideShift)}
+                    className="flex items-center justify-center gap-3 bg-cyan-600 hover:bg-cyan-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all disabled:opacity-50"
+                  >
+                    <PauseIcon className="h-6 w-6" />
+                    Start Break
+                  </button>
+                </div>
+              )}
+              {/* Custom Checkout Confirmation Modal */}
+              {showCheckoutConfirm ? (
+                <div className="sm:col-span-2 p-6 bg-slate-900/90 border border-rose-500/50 rounded-2xl flex flex-col items-center gap-4 shadow-[0_0_30px_rgba(225,29,72,0.2)] animate-in fade-in zoom-in duration-200">
+                  <h3 className="text-xl font-bold text-white">End Today's Session?</h3>
+                  <p className="text-sm text-slate-400 text-center max-w-sm">
+                    Are you sure you want to check out for today? You will <strong className="text-rose-400">not be able to log back in</strong> or start a new session until tomorrow.
+                  </p>
+                  <div className="flex gap-4 w-full mt-2">
+                    <button
+                      onClick={() => setShowCheckoutConfirm(false)}
+                      disabled={loading}
+                      className="flex-1 py-3 px-4 rounded-xl font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                    >
+                      No, Keep Working
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCheckoutConfirm(false);
+                        handleAction('work', 'stop');
+                      }}
+                      disabled={loading}
+                      className="flex-1 py-3 px-4 rounded-xl font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-500/30 transition-colors"
+                    >
+                      Yes, Check Out
+                    </button>
+                  </div>
+                </div>
+              ) : (
                 <button
-                  onClick={handleBreakStart}
+                  onClick={() => setShowCheckoutConfirm(true)}
                   disabled={loading || (user?.role !== 'admin' && isOutsideShift)}
-                  className="flex items-center justify-center gap-3 bg-cyan-600 hover:bg-cyan-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all disabled:opacity-50"
+                  className="flex items-center justify-center gap-3 bg-rose-600 hover:bg-rose-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(225,29,72,0.3)] transition-all disabled:opacity-50 sm:col-span-2"
                 >
-                  <PauseIcon className="h-6 w-6" />
-                  Start Break
+                  <StopIcon className="h-6 w-6" />
+                  End Work / Check Out
                 </button>
-              </div>
-              
-              <button
-                onClick={() => handleAction('work', 'stop')}
-                disabled={loading || (user?.role !== 'admin' && isOutsideShift)}
-                className="flex items-center justify-center gap-3 bg-rose-600 hover:bg-rose-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(225,29,72,0.3)] transition-all disabled:opacity-50 sm:col-span-2"
-              >
-                <StopIcon className="h-6 w-6" />
-                End Work / Check Out
-              </button>
+              )}
             </>
           )}
 

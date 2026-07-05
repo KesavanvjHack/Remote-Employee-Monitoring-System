@@ -16,10 +16,6 @@ const LeaveApproval = () => {
   const [exportEmployee, setExportEmployee] = useState('all');
   const [isExporting, setIsExporting] = useState(false);
 
-  useEffect(() => {
-    fetchLeaves();
-  }, []);
-
   const fetchLeaves = async () => {
     try {
       const res = await api.get('/leave/');
@@ -30,6 +26,10 @@ const LeaveApproval = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchLeaves();
+  }, []);
 
   const handleAction = async (id, action) => {
     setProcessingId(id);

@@ -99,16 +99,32 @@ class NotificationService:
                     """
                     text_message = f"Hello {notif.recipient.first_name},\n\nYou have received a new notification in REMS:\n\n{notif.title}\n\n{notif.message}\n\nSender: {sender.full_name} ({sender.role.upper()})\nType: {notif.get_type_display()}\n\n---\nThis is an automated system email from REMS."
                     
-                    send_mail(
-                        subject=subject,
-                        message=text_message,
-                        from_email=settings.DEFAULT_FROM_EMAIL if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'noreply@rems.com',
-                        recipient_list=[notif.recipient.email],
-                        html_message=html_message,
-                        fail_silently=False,
-                    )
-                except Exception as mail_err:
-                    logger.error(f"Failed to send email notification to {notif.recipient.email}: {mail_err}")
+                    def send_async_email(subj, msg, from_em, to_em, html_msg):
+                        try:
+                            send_mail(
+                                subject=subj,
+                                message=msg,
+                                from_email=from_em,
+                                recipient_list=to_em,
+                                html_message=html_msg,
+                                fail_silently=True,
+                            )
+                        except Exception as mail_err:
+                            logger.error(f"Failed to send email notification to {to_em[0]}: {mail_err}")
+                    
+                    import threading
+                    threading.Thread(
+                        target=send_async_email,
+                        args=(
+                            subject,
+                            text_message,
+                            settings.DEFAULT_FROM_EMAIL if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'noreply@rems.com',
+                            [notif.recipient.email],
+                            html_message
+                        )
+                    ).start()
+                except Exception as e:
+                    logger.error(f"Failed to queue email notification: {e}")
         except Exception as e:
             logger.error(f"Notification processing failed: {e}")
 
@@ -229,6 +245,30 @@ def get_user_shift_times(user, policy=None):
     return time(9, 30), time(17, 30)
 
 
+def get_current_shift_date(user, now_dt=None):
+    """
+    Get the correct shift date for a user based on the current time.
+    For overnight shifts, if the current time is after midnight but before the shift ends,
+    the shift date is the previous calendar day.
+    """
+    from datetime import date, timedelta
+    from django.utils import timezone
+    if not now_dt:
+        now_dt = timezone.localtime(timezone.now())
+    
+    policy = get_user_policy(user)
+    s_time, e_time = get_user_shift_times(user, policy)
+    
+    current_date = now_dt.date()
+    if s_time > e_time:
+        # Overnight shift
+        if now_dt.time() <= e_time:
+            current_date -= timedelta(days=1)
+            
+    return current_date
+
+
+
 class AttendanceService:
     """Core attendance engine. Status derived solely from time calculations."""
 
@@ -236,13 +276,13 @@ class AttendanceService:
     @staticmethod
     @transaction.atomic
     def get_or_create_today(user):
-        """Called on login. Creates attendance record for today if not exists."""
+        """Called on login. Creates attendance record for the active shift date if not exists."""
         from .models import Attendance, Holiday
 
-        today = date.today()
+        shift_date = get_current_shift_date(user)
 
-        # Check if today is a holiday
-        holiday = Holiday.objects.filter(date=today).first()
+        # Check if shift_date is a holiday
+        holiday = Holiday.objects.filter(date=shift_date).first()
         if holiday:
             default_status = Attendance.STATUS_HOLIDAY
             default_remark = f"Holiday: {holiday.name}"
@@ -252,7 +292,7 @@ class AttendanceService:
 
         attendance, created = Attendance.objects.get_or_create(
             user=user,
-            date=today,
+            date=shift_date,
             defaults={
                 'status': default_status,
                 'manager_remark': default_remark
@@ -426,61 +466,41 @@ class AttendanceService:
     @transaction.atomic
     def auto_checkout_all_active_sessions():
         """
-        Find all open work sessions for today that have passed the shift end time.
+        Find all open work sessions that have passed their shift end time.
         Close them and notify all roles.
         """
-        from .models import WorkSession, AttendancePolicy
+        from .models import WorkSession
         import datetime
         
         now_local = timezone.localtime(timezone.now())
         tz = timezone.get_current_timezone()
         
-        # 1. Handle Past Days: Find ALL open sessions where attendance date < today
-        past_open_sessions = WorkSession.objects.filter(
-            end_time__isnull=True,
-            attendance__date__lt=now_local.date()
+        open_sessions = WorkSession.objects.filter(
+            end_time__isnull=True
         ).select_related('attendance__user')
         
         count = 0
-        for session in past_open_sessions:
+        for session in open_sessions:
             user = session.attendance.user
             if user.role == 'admin':
                 continue
             policy = get_user_policy(user)
             if not policy:
                 continue
-            # For past sessions, we close them at the shift_end_time of THAT SPECIFIC DAY
-            session_date = session.attendance.date
+            
             s_time, e_time = get_user_shift_times(user, policy)
+            session_date = session.attendance.date
+            
+            # Construct shift end datetime for this session
             close_time = timezone.make_aware(datetime.datetime.combine(session_date, e_time), tz)
             if s_time > e_time:
                 close_time += datetime.timedelta(days=1)
-            WorkSessionService.stop_session(user, end_time=close_time, is_auto=True, session=session)
-            count += 1
-
-        # 2. Handle Today: Find open sessions for today
-        today_open_sessions = WorkSession.objects.filter(
-            end_time__isnull=True,
-            attendance__date=now_local.date()
-        ).select_related('attendance__user')
-        
-        for session in today_open_sessions:
-            user = session.attendance.user
-            if user.role == 'admin':
-                continue
-            policy = get_user_policy(user)
-            if not policy:
-                continue
-            s_time, e_time = get_user_shift_times(user, policy)
-            shift_end_dt_today = timezone.make_aware(datetime.datetime.combine(now_local.date(), e_time), tz)
-            if s_time > e_time:
-                shift_end_dt_today += datetime.timedelta(days=1)
-            if now_local >= shift_end_dt_today:
-                WorkSessionService.stop_session(user, end_time=shift_end_dt_today, is_auto=True, session=session)
+                
+            if now_local >= close_time:
+                WorkSessionService.stop_session(user, end_time=close_time, is_auto=True, session=session)
                 count += 1
-
-            
         return count
+
 
     @staticmethod
     def notify_upcoming_shifts():
@@ -859,9 +879,18 @@ class IdleService:
 class StatusService:
 
     @staticmethod
+    def touch_presence(user_id):
+        """Force presence to true for 35s. Useful when user makes an active HTTP request."""
+        from django.core.cache import cache
+        cache.set(f'presence_{str(user_id)}', True, 35)
+
+    @staticmethod
     def broadcast_status_change(user):
         """Helper to push the current status of a user over Django Channels."""
         try:
+            # If we are broadcasting because of a user action, ensure presence is active
+            StatusService.touch_presence(user.id)
+            
             channel_layer = get_channel_layer()
             status_data = StatusService.get_user_status(user)
             if channel_layer:
@@ -893,41 +922,146 @@ class StatusService:
             logger.error(f"Policy broadcast failed: {e}")
 
     @staticmethod
+    def get_users_statuses(users, target_date=None):
+        """
+        Return a dict of user_id -> status_dict for multiple users in bulk (5 queries total).
+        """
+        from .models import Attendance, WorkSession, BreakSession, IdleLog
+        from django.core.cache import cache
+        if not target_date:
+            target_date = date.today()
+
+        user_ids = [u.id for u in users]
+
+        # 1. Fetch all open work sessions for these users (supporting overnight shifts)
+        open_sessions = WorkSession.objects.filter(
+            attendance__user_id__in=user_ids,
+            end_time__isnull=True
+        ).select_related('attendance')
+        open_session_map = {str(s.attendance.user_id): s for s in open_sessions}
+
+        # Determine which users do not have an open session, to fetch their target_date attendance
+        users_without_open = [u_id for u_id in user_ids if str(u_id) not in open_session_map]
+
+        # 2. Fetch target_date attendances only for users without open sessions
+        attendances = Attendance.objects.filter(user_id__in=users_without_open, date=target_date)
+        att_map = {str(a.user_id): a for a in attendances}
+
+        # 3. Fetch all open breaks for these open sessions
+        open_breaks = BreakSession.objects.filter(
+            work_session__in=open_sessions,
+            end_time__isnull=True
+        )
+        break_map = {str(b.work_session_id): b for b in open_breaks}
+
+        # 4. Fetch all open idle logs for these open sessions
+        open_idles = IdleLog.objects.filter(
+            work_session__in=open_sessions,
+            end_time__isnull=True
+        )
+        idle_map = {str(i.work_session_id): i for i in open_idles}
+
+        # 5. Fetch all presence keys in bulk using Django cache (cache keys are string UUIDs)
+        presence_keys = [f'presence_{str(u_id)}' for u_id in user_ids]
+        cached_presence = cache.get_many(presence_keys) if hasattr(cache, 'get_many') else {}
+        if not cached_presence:
+            cached_presence = {k: cache.get(k) for k in presence_keys}
+
+        statuses = {}
+        for user in users:
+            u_id_str = str(user.id)
+            if user.role == 'admin':
+                status_data = {'status': 'working', 'attendance': None, 'session': None}
+                statuses[user.id] = status_data
+                statuses[u_id_str] = status_data
+                continue
+
+            # Prioritize presence: If not online, they are offline
+            is_online = cached_presence.get(f'presence_{u_id_str}')
+            if not is_online:
+                att = att_map.get(u_id_str)
+                # Fallback to session attendance if present
+                if not att:
+                    session = open_session_map.get(u_id_str)
+                    if session:
+                        att = session.attendance
+                status_data = {'status': 'offline', 'attendance': att, 'session': None}
+                statuses[user.id] = status_data
+                statuses[u_id_str] = status_data
+                continue
+
+            session = open_session_map.get(u_id_str)
+            if session:
+                att = session.attendance
+                # Check break
+                ob = break_map.get(str(session.id))
+                if ob:
+                    status_data = {'status': 'on_break', 'attendance': att, 'session': session}
+                    statuses[user.id] = status_data
+                    statuses[u_id_str] = status_data
+                    continue
+                # Check idle
+                oi = idle_map.get(str(session.id))
+                if oi:
+                    status_data = {'status': 'idle', 'attendance': att, 'session': session}
+                    statuses[user.id] = status_data
+                    statuses[u_id_str] = status_data
+                    continue
+                status_data = {'status': 'working', 'attendance': att, 'session': session}
+                statuses[user.id] = status_data
+                statuses[u_id_str] = status_data
+                continue
+
+            # No open session; check target_date attendance
+            att = att_map.get(u_id_str)
+            status_data = {'status': 'online', 'attendance': att, 'session': None}
+            statuses[user.id] = status_data
+            statuses[u_id_str] = status_data
+
+        return statuses
+
+    @staticmethod
     def get_user_status(user):
         """
         Return real-time status: online/working/idle/on_break/offline
         """
-        from .models import WorkSession
+        from .models import WorkSession, Attendance
+        from django.core.cache import cache
 
         if user.role == 'admin':
             return {'status': 'working', 'attendance': None, 'session': None}
 
+        # Check presence first: If not online, they are offline
+        is_online = cache.get(f'presence_{user.id}')
+        if not is_online:
+            today = date.today()
+            attendance = user.attendances.filter(date=today).first()
+            return {'status': 'offline', 'attendance': attendance, 'session': None}
+
+        # 1. Look for any active/open session first to support overnight shifts
+        open_session = WorkSession.objects.filter(
+            attendance__user=user,
+            end_time__isnull=True
+        ).select_related('attendance').first()
+
+        if open_session:
+            attendance = open_session.attendance
+            # Check break (Prioritized over idle)
+            open_break = open_session.break_sessions.filter(end_time__isnull=True).first()
+            if open_break:
+                return {'status': 'on_break', 'attendance': attendance, 'session': open_session}
+
+            # Check idle
+            open_idle = open_session.idle_logs.filter(end_time__isnull=True).first()
+            if open_idle:
+                return {'status': 'idle', 'attendance': attendance, 'session': open_session}
+
+            return {'status': 'working', 'attendance': attendance, 'session': open_session}
+
+        # 2. If no open session, use today's attendance record
         today = date.today()
         attendance = user.attendances.filter(date=today).first()
-        if not attendance:
-            status = 'online' if cache.get(f'presence_{user.id}') else 'offline'
-            return {'status': status, 'attendance': None, 'session': None}
- 
-        open_session = WorkSession.objects.filter(
-            attendance=attendance,
-            end_time__isnull=True
-        ).first()
- 
-        if not open_session:
-            status = 'online' if cache.get(f'presence_{user.id}') else 'offline'
-            return {'status': status, 'attendance': attendance, 'session': None}
-
-        # Check break (Prioritized over idle)
-        open_break = open_session.break_sessions.filter(end_time__isnull=True).first()
-        if open_break:
-            return {'status': 'on_break', 'attendance': attendance, 'session': open_session}
-
-        # Check idle
-        open_idle = open_session.idle_logs.filter(end_time__isnull=True).first()
-        if open_idle:
-            return {'status': 'idle', 'attendance': attendance, 'session': open_session}
-
-        return {'status': 'working', 'attendance': attendance, 'session': open_session}
+        return {'status': 'online', 'attendance': attendance, 'session': None}
 
 
 # ── Leave Service ──────────────────────────────────────────────────────────────
@@ -1072,8 +1206,24 @@ class ReportService:
         total_score = 0
         scored_days = 0
         if total_records < 200:
+            from .models import AttendancePolicy, AppUsageLog
+            policy = AttendancePolicy.objects.filter(is_active=True).first()
+            
+            # Fetch all app usage in bulk for these users/range
+            app_usage_qs = AppUsageLog.objects.filter(user_id__in=[att.user_id for att in qs])
+            if from_date:
+                app_usage_qs = app_usage_qs.filter(timestamp__date__gte=from_date)
+            app_usage_qs = app_usage_qs.filter(timestamp__date__lte=effective_to_date)
+            
+            # Group by user and date
+            app_usage_data = app_usage_qs.values('user_id', 'timestamp__date').annotate(total_sec=Sum('duration_seconds'))
+            app_usage_map = {(d['user_id'], d['timestamp__date']): d['total_sec'] for d in app_usage_data}
+            
             for d_att in qs.select_related('user'):
-                total_score += ProductivityScoringService.calculate_score(d_att.user, d_att.date)
+                user_app_sec = app_usage_map.get((d_att.user_id, d_att.date), 0)
+                total_score += ProductivityScoringService.calculate_score(
+                    d_att.user, d_att.date, attendance=d_att, policy=policy, app_usage_sec=user_app_sec
+                )
                 scored_days += 1
         avg_productivity_score = round(total_score / scored_days) if scored_days > 0 else 0
 
@@ -1162,7 +1312,7 @@ class AuditService:
 
 class ProductivityScoringService:
     @staticmethod
-    def calculate_score(user, target_date=None):
+    def calculate_score(user, target_date=None, attendance=None, policy=None, app_usage_sec=None):
         """
         Calculates a daily productivity score (0-100) based on:
         - Total work hours (vs policy minimum)
@@ -1170,24 +1320,27 @@ class ProductivityScoringService:
         - Penalty for flagged anomalous behavior (too many breaks, unauthorized apps)
         """
         from .models import Attendance, AttendancePolicy, AppUsageLog
+        from django.db.models import Sum
 
         if not target_date:
             target_date = date.today()
 
-        attendance = Attendance.objects.filter(user=user, date=target_date).first()
+        if attendance is None:
+            attendance = Attendance.objects.filter(user=user, date=target_date).first()
         if not attendance:
             return 0  # No attendance = 0 score
 
         # Base score from work hours
-        try:
-            policy = AttendancePolicy.objects.filter(is_active=True).first()
+        if policy is None:
+            try:
+                policy = AttendancePolicy.objects.filter(is_active=True).first()
+                min_hours = float(policy.min_working_hours) * 3600 if policy else 8 * 3600
+            except Exception:
+                min_hours = 8 * 3600
+        else:
             min_hours = float(policy.min_working_hours) * 3600 if policy else 8 * 3600
-        except Exception:
-            min_hours = 8 * 3600
 
         work_sec = attendance.total_work_seconds
-        idle_sec = attendance.total_idle_seconds
-        break_sec = attendance.total_break_seconds
         
         # Base proportion of minimum hours (using total work hours as requested)
         score = (work_sec / min_hours) * 100 if min_hours > 0 else 0
@@ -1197,11 +1350,14 @@ class ProductivityScoringService:
             score -= 15  # Flat penalty for anomalies
 
         # Penalties: Unauthorized Web/App usage (simulated based on app logs)
-        # Assuming app logs > 1 hour of non-work apps penalizes
-        non_work_apps_sec = AppUsageLog.objects.filter(
-            user=user, 
-            timestamp__date=target_date
-        ).aggregate(s=Sum('duration_seconds'))['s'] or 0
+        if app_usage_sec is None:
+            non_work_apps_sec = AppUsageLog.objects.filter(
+                user=user, 
+                timestamp__date=target_date
+            ).aggregate(s=Sum('duration_seconds'))['s'] or 0
+        else:
+            non_work_apps_sec = app_usage_sec
+
         if non_work_apps_sec > 3600:
             score -= 10
 

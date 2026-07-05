@@ -10,10 +10,6 @@ const TeamReports = () => {
   const [teamData, setTeamData] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchReports();
-  }, []);
-
   const fetchReports = async () => {
     try {
       const res = await api.get('/reports/?type=team');
@@ -24,6 +20,10 @@ const TeamReports = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchReports();
+  }, []);
 
   if (loading) return <div className="text-indigo-400">Loading Team Analytics...</div>;
 

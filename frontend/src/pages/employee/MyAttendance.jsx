@@ -43,12 +43,18 @@ const MyAttendance = () => {
     fetchAttendance();
     fetchHolidays();
 
-    // Auto-refresh every 30 seconds for a more 'Live' feel
+    // Auto-refresh every 15 seconds for a real-time 'Live' feel
     const intervalId = setInterval(() => {
       fetchAttendance(true); // silent refresh
-    }, 30000);
+    }, 15000);
 
-    return () => clearInterval(intervalId);
+    const handleSync = () => fetchAttendance(true);
+    window.addEventListener('rems_sync_required', handleSync);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('rems_sync_required', handleSync);
+    };
   }, []);
 
   const fetchHolidays = async () => {
@@ -371,30 +377,30 @@ const MyAttendance = () => {
                   <td className="px-4 py-2.5 text-center font-mono text-emerald-400">
                     <LiveDuration
                       initialSeconds={record.total_work_seconds}
-                      status={record.date === todayStr ? globalStatus : record.live_status}
+                      status={isRecordActive ? globalStatus : record.live_status}
                       type="work"
-                      isToday={record.date === todayStr}
+                      isToday={isRecordActive}
                     />
                   </td>
                   <td className="px-4 py-2.5 text-center font-mono text-cyan-400">
                     <LiveDuration
                       initialSeconds={record.total_break_seconds}
-                      status={record.date === todayStr ? globalStatus : record.live_status}
+                      status={isRecordActive ? globalStatus : record.live_status}
                       type="break"
-                      isToday={record.date === todayStr}
+                      isToday={isRecordActive}
                     />
                   </td>
                   <td className="px-4 py-2.5 text-center font-mono text-amber-400">
                     <LiveDuration
                       initialSeconds={record.total_idle_seconds}
-                      status={record.date === todayStr ? globalStatus : record.live_status}
+                      status={isRecordActive ? globalStatus : record.live_status}
                       type="idle"
-                      isToday={record.date === todayStr}
+                      isToday={isRecordActive}
                     />
                   </td>
                   <td className="px-4 py-2.5 text-center font-mono text-orange-400/90">
-                    {record.missing_seconds > 0 ? (
-                       <span>{Math.floor(record.missing_seconds / 3600).toString().padStart(2, '0')}:{Math.floor((record.missing_seconds % 3600) / 60).toString().padStart(2, '0')}:{(record.missing_seconds % 60).toString().padStart(2, '0')}</span>
+                    {record.first_login && record.missing_seconds != null ? (
+                       <LiveDuration initialSeconds={record.missing_seconds} status={isRecordActive ? globalStatus : record.live_status} type="gap" isToday={isRecordActive} />
                     ) : '—'}
                   </td>
                   <td className="px-4 py-2.5 text-center">

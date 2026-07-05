@@ -57,6 +57,11 @@ api.interceptors.response.use(
     }
 
     // Global error notification for server errors
+    if (axios.isCancel(error)) {
+      // Ignored intentionally — this happens when we use AbortController to cancel stale requests
+      return Promise.reject(error);
+    }
+
     if (error.response?.status >= 500) {
       const { toast } = await import('react-hot-toast');
       toast.error('Server error. Please try again later.');

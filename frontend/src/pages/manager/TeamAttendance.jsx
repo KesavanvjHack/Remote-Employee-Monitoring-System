@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useContext } from 'react';
+import { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import api from '../../api/axios';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { UserGroupIcon, ArrowPathIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
@@ -6,6 +6,8 @@ import toast from 'react-hot-toast';
 import { formatLastLogout, formatDecimalHours } from '../../utils/format';
 import LiveDuration from '../../components/LiveDuration';
 import { AuthContext } from '../../context/AuthContext';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const ATTENDANCE_COLORS = {
   present:  'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20',
@@ -30,8 +32,8 @@ const parseTime12hToMinutes = (time12h) => {
 const TeamAttendance = () => {
   const [attendance, setAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const { policy } = useContext(AuthContext);
+  const [lastUpdated, setLastUpdated] = useState(new Date());
+  const { policy, liveStatuses } = useContext(AuthContext);
 
   // Date filter state for export
   const [startDate, setStartDate] = useState('');
@@ -39,16 +41,31 @@ const TeamAttendance = () => {
   const [exportType, setExportType] = useState('custom');
   const [exportEmployee, setExportEmployee] = useState('all');
 
+  const abortControllerRef = useRef(null);
+
   const fetchTeamAttendance = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
+    
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     try {
-      const res = await api.get('/sessions/team-timesheet/');
+      const res = await api.get('/sessions/team-timesheet/', {
+        signal: abortControllerRef.current.signal
+      });
       setAttendance(res.data.results || res.data);
       setLastUpdated(new Date());
     } catch (error) {
-      toast.error('Failed to load team timesheet');
+      if (error.name === 'CanceledError' || error.name === 'AbortError') return;
+      if (!silent) {
+        toast.error('Failed to load team timesheet');
+      }
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -56,11 +73,17 @@ const TeamAttendance = () => {
   useEffect(() => {
     fetchTeamAttendance();
 
-    // Auto-refresh every 1 minute
-    const interval = setInterval(() => fetchTeamAttendance(true), 60000);
+    // Auto-refresh every 15 seconds for attendance data (login times, durations)
+    // Status is driven by WS via AuthContext.liveStatuses — no need for fast DB polling
+    const interval = setInterval(() => fetchTeamAttendance(true), 15000);
+
+    // Instant refresh on attendance-level changes only (not status-only WS updates)
+    const handleRefresh = () => fetchTeamAttendance(true);
+    window.addEventListener('rems_sync_required', handleRefresh);
 
     return () => {
       clearInterval(interval);
+      window.removeEventListener('rems_sync_required', handleRefresh);
     };
   }, [fetchTeamAttendance]);
 
@@ -138,6 +161,10 @@ const TeamAttendance = () => {
     toast.success('Team timesheet export downloaded successfully!');
   };
 
+  const uniqueEmployees = Array.from(new Set(attendance.map(a => a.user_name))).filter(Boolean).sort();
+  const filteredAttendance = attendance.filter(record => new Date(record.date) <= new Date());
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(filteredAttendance, 15);
+
   if (loading) return (
     <div className="flex items-center gap-3 text-indigo-400 mt-10">
       <ArrowPathIcon className="h-5 w-5 animate-spin" />
@@ -145,8 +172,6 @@ const TeamAttendance = () => {
     </div>
   );
 
-  const uniqueEmployees = Array.from(new Set(attendance.map(a => a.user_name))).filter(Boolean).sort();
-  
   return (
     <div className="space-y-6 page-fade-in">
       <div className="flex items-center justify-between gap-4 mb-6">
@@ -156,7 +181,7 @@ const TeamAttendance = () => {
           </div>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">Team Timesheet</h1>
-            <p className="text-[10px] text-slate-500 hidden sm:block">Showing direct reports • Updated every 1m</p>
+            <p className="text-[10px] text-slate-500 hidden sm:block">Showing direct reports • Updated every 1s</p>
           </div>
         </div>
 
@@ -251,9 +276,7 @@ const TeamAttendance = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50 text-sm">
-              {attendance
-                .filter(record => new Date(record.date) <= new Date())
-                .map((record) => {
+              {currentData.map((record) => {
                   const todayStr = new Date().toISOString().split('T')[0];
                   const now = new Date();
                   const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
@@ -299,6 +322,20 @@ const TeamAttendance = () => {
                     }
                   }
 
+                  const mapStatusToLiveLabel = (status) => {
+                    if (!status) return 'Offline';
+                    const s = status.toLowerCase();
+                    if (s === 'working') return 'Working';
+                    if (s === 'on_break' || s === 'on break') return 'On Break';
+                    if (s === 'idle') return 'Idle';
+                    if (s === 'online') return 'Online';
+                    return 'Offline';
+                  };
+                  const lookupKey = (record.user || '').toLowerCase();
+                  const wsStatus = liveStatuses[lookupKey];
+                  const resolvedStatusStr = wsStatus ? (typeof wsStatus === 'object' ? wsStatus.status : wsStatus) : null;
+                  const resolvedLiveStatus = resolvedStatusStr ? mapStatusToLiveLabel(resolvedStatusStr) : (record.live_status || 'Offline');
+
                   return (
                     <tr key={record.id} className="hover:bg-slate-700/20 transition-colors">
                       <td className="px-3 py-4 font-medium text-slate-200 text-xs whitespace-nowrap">
@@ -329,18 +366,18 @@ const TeamAttendance = () => {
                       </td>
                       <td className="px-3 py-4 text-right text-emerald-400 font-mono text-xs">
                         <div className="flex flex-col items-end gap-1">
-                          <LiveDuration initialSeconds={record.total_work_seconds} status={record.live_status} type="work" isToday={record.date === todayStr} />
+                          <LiveDuration initialSeconds={record.total_work_seconds} status={resolvedLiveStatus} type="work" isToday={isRecordActive} />
                         </div>
                       </td>
                       <td className="px-3 py-4 text-right text-cyan-400 font-mono text-xs">
-                        <LiveDuration initialSeconds={record.total_break_seconds} status={record.live_status} type="break" isToday={record.date === todayStr} />
+                        <LiveDuration initialSeconds={record.total_break_seconds} status={resolvedLiveStatus} type="break" isToday={isRecordActive} />
                       </td>
                       <td className="px-3 py-4 text-right text-amber-400 font-mono text-xs">
-                        <LiveDuration initialSeconds={record.total_idle_seconds} status={record.live_status} type="idle" isToday={record.date === todayStr} />
+                        <LiveDuration initialSeconds={record.total_idle_seconds} status={resolvedLiveStatus} type="idle" isToday={isRecordActive} />
                       </td>
                       <td className="px-3 py-4 text-right text-orange-400/90 font-mono text-xs whitespace-nowrap font-bold">
-                        {record.missing_seconds > 0 ? (
-                           <span>{Math.floor(record.missing_seconds / 3600).toString().padStart(2, '0')}:{Math.floor((record.missing_seconds % 3600) / 60).toString().padStart(2, '0')}:{(record.missing_seconds % 60).toString().padStart(2, '0')}</span>
+                        {record.first_login && record.missing_seconds != null ? (
+                           <LiveDuration initialSeconds={record.missing_seconds} status={resolvedLiveStatus} type="gap" isToday={isRecordActive} isWithinShift={isCalculating} />
                         ) : '—'}
                       </td>
                       <td className="px-3 py-4 text-center">
@@ -355,6 +392,13 @@ const TeamAttendance = () => {
             </tbody>
           </table>
         </div>
+        <PaginationControls 
+          currentPage={currentPage}
+          totalPages={totalPages}
+          goToPage={goToPage}
+          nextPage={nextPage}
+          prevPage={prevPage}
+        />
       </div>
 
     </div>

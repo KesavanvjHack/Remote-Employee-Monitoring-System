@@ -49,7 +49,8 @@ const StatusBadge = ({ status }) => {
     }
   };
 
-  const { color, bg, border, icon: Icon, label } = config[status] || config.offline;
+  const normalizedStatus = status ? status.toLowerCase().replace(/[\s_]+/g, '_') : 'offline';
+  const { color, bg, border, icon: Icon, label } = config[normalizedStatus] || config.offline;
 
   return (
     <div className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full border ${bg} ${border} ${color}`}>

@@ -22,11 +22,6 @@ const STATUS_META = {
 };
 
 const getStatusMeta = (m) => {
-  const role = m.role || m.user_role;
-  const isNightShift = m.shift_name && m.shift_name.toLowerCase().includes('night shift');
-  if (m.status === 'online' && role === 'employee' && isNightShift) {
-    return { label: 'Online(NS)', dot: 'bg-rose-500', text: 'text-rose-500' };
-  }
   return STATUS_META[m.status] || STATUS_META.offline;
 };
 
@@ -35,6 +30,8 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
   const [members, setMembers]     = useState([]);
   const [loadingList, setLoading] = useState(false);
   const panelRef                  = useRef(null);
+  const fetchMembersAbortRef      = useRef(null);
+
 
   // Close on outside click
   useEffect(() => {
@@ -48,32 +45,53 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
   // Fetch individual list
   const fetchMembers = async (isBackground = false) => {
     if (!isBackground) setLoading(true);
+    
+    if (fetchMembersAbortRef.current) {
+      fetchMembersAbortRef.current.abort();
+    }
+    fetchMembersAbortRef.current = new AbortController();
+
     try {
-      const res = await api.get('/status/team/');
+      const res = await api.get('/status/team/', {
+        signal: fetchMembersAbortRef.current.signal
+      });
       setMembers(res.data.results || res.data);
-    } catch { /* silent */ } finally {
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError') return;
+      /* silent */
+    } finally {
       if (!isBackground) setLoading(false);
     }
   };
 
-  // Initial silent fetch to populate pill counts even before opening panel
+  // Initial silent fetch to populate member list; no event-driven re-fetches needed
+  // because mergedMembers already merges live statuses from AuthContext.liveStatuses (WS-driven)
   useEffect(() => {
     fetchMembers(true);
+    // Refresh member list every 30s to catch new members joining/leaving
+    const bgInterval = setInterval(() => fetchMembers(true), 30000);
+    return () => clearInterval(bgInterval);
   }, []);
 
+  // Fetch member list metadata (names, emails, roles) on open and refresh every 30s.
+  // Status display comes from AuthContext.liveStatuses (WS-driven + 5s HTTP fallback in AuthContext),
+  // so we do NOT poll /status/team/ here — that would race against AuthContext and cause flicker.
   useEffect(() => {
     if (!open) return;
-    const interval = setInterval(() => fetchMembers(true), 15000);
-    return () => clearInterval(interval);
+    fetchMembers(true); // Immediate fetch on open to get fresh member metadata
+    // No status polling interval here — status is served by AuthContext.liveStatuses
+    return () => {};
   }, [open]);
 
   // Merge websocket statuses and apply role-based filtering for managers
   const mergedMembers = useMemo(() => {
     let list = members.map(m => {
-      const wsStatus = liveStatuses[m.user_id] || liveStatuses[m.id];
+      const lookupKey = String(m.user_id || m.id || '').toLowerCase();
+      const wsStatus = liveStatuses[lookupKey];
+      const resolvedStatus = wsStatus ? (typeof wsStatus === 'object' ? wsStatus.status : wsStatus) : m.status;
       return {
         ...m,
-        status: wsStatus || m.status
+        status: resolvedStatus ? resolvedStatus.toLowerCase().replace(/[\s_]+/g, '_') : 'offline'
       };
     });
 
@@ -91,6 +109,8 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
       working:  mergedMembers.filter(m => m.status === 'working').length,
       on_break: mergedMembers.filter(m => m.status === 'on_break').length,
       idle:     mergedMembers.filter(m => m.status === 'idle').length,
+      online:   mergedMembers.filter(m => m.status === 'online').length,
+      offline:  mergedMembers.filter(m => m.status === 'offline').length,
       total:    mergedMembers.length,
     };
   }, [mergedMembers]);
@@ -99,8 +119,8 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
   // const hasActive = counts.working > 0 || counts.on_break > 0 || counts.idle > 0;
   // if (!hasActive) return null;
 
-  // Group helpers
-  const byRole = (role) => mergedMembers.filter(m => m.role === role || m.user_role === role);
+  // Group helpers — check both 'role' and 'user_role' for compatibility
+  const byRole = (role) => mergedMembers.filter(m => (m.role || m.user_role) === role);
   const admins    = byRole('admin');
   const managers  = byRole('manager');
   const employees = byRole('employee');
@@ -143,7 +163,7 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
         <div className="fixed sm:absolute top-20 sm:top-auto inset-x-4 sm:inset-x-auto sm:right-0 mt-3 sm:w-80 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl z-50 overflow-hidden origin-top sm:origin-top-right animate-in fade-in zoom-in duration-200">
           <div className="flex items-center justify-between px-4 py-3 bg-slate-800/60 border-b border-slate-700/50">
             <p className="text-sm font-semibold text-slate-200">Live Team Status</p>
-            <button onClick={fetchMembers} className="text-slate-500 hover:text-indigo-400 transition-colors text-xs">↻ Refresh</button>
+            <button onClick={() => fetchMembers(false)} className="text-slate-500 hover:text-indigo-400 transition-colors text-xs">↻ Refresh</button>
           </div>
 
           <div className="max-h-96 overflow-y-auto divide-y divide-slate-800">
@@ -190,6 +210,15 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-slate-200 truncate">{m.user_name || m.name}</p>
                             <p className="text-xs text-slate-500 truncate">{m.email}</p>
+                            {m.shift_name && (
+                              <span className={`text-[9px] font-mono mt-0.5 inline-block px-1.5 py-0.5 rounded ${
+                                m.shift_name.toLowerCase().includes('night') 
+                                  ? 'text-rose-400/80 bg-rose-500/10' 
+                                  : 'text-indigo-400/80 bg-indigo-500/10'
+                              }`}>
+                                {m.shift_name}
+                              </span>
+                            )}
                           </div>
                           <span className={`flex items-center gap-1 text-xs font-semibold ${st.text}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
@@ -215,6 +244,15 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-slate-200 truncate">{m.user_name || m.name}</p>
                             <p className="text-xs text-slate-500 truncate">{m.email}</p>
+                            {m.shift_name && (
+                              <span className={`text-[9px] font-mono mt-0.5 inline-block px-1.5 py-0.5 rounded ${
+                                m.shift_name.toLowerCase().includes('night') 
+                                  ? 'text-rose-400/80 bg-rose-500/10' 
+                                  : 'text-indigo-400/80 bg-indigo-500/10'
+                              }`}>
+                                {m.shift_name}
+                              </span>
+                            )}
                           </div>
                           <span className={`flex items-center gap-1 text-xs font-semibold ${st.text}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
@@ -234,7 +272,7 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
           </div>
 
           <div className="px-4 py-2 bg-slate-800/60 border-t border-slate-700/50 text-[10px] text-slate-600 text-center">
-            Auto-refreshes every 15s • Powered by WebSocket
+            Live via WebSocket · HTTP fallback every 15s
           </div>
         </div>
       )}
@@ -268,26 +306,13 @@ const TopBar = ({ onMenuClick }) => {
   };
 
   useEffect(() => {
-    fetchStatus();
-    
     // Set up ticking clock
     const clockInterval = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
 
-    // Listen to manual triggers from WorkSession
-    const handleStatusChange = (e) => {
-      if (e.detail) {
-        setCurrentStatus(e.detail);
-      } else {
-        fetchStatus();
-      }
-    };
-    window.addEventListener('statusChange', handleStatusChange);
-
     return () => {
       clearInterval(clockInterval);
-      window.removeEventListener('statusChange', handleStatusChange);
     };
   }, [user]);
 
@@ -305,15 +330,6 @@ const TopBar = ({ onMenuClick }) => {
 
   const handleMarkAsRead = async (id) => {
     await markAsRead(id);
-  };
-
-  const fetchStatus = async () => {
-    try {
-      const res = await api.get('/status/me/');
-      setCurrentStatus(res.data.status);
-    } catch (err) {
-      console.error('Failed to fetch status', err);
-    }
   };
 
   return (

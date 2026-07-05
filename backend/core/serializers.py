@@ -254,27 +254,39 @@ class AttendanceSerializer(serializers.ModelSerializer):
         return int(self.sum_intervals(self.merge_intervals(intervals)))
 
     def get_total_work_seconds(self, obj):
-        """Returns Net Productive Seconds: Gross - Breaks - Idle"""
+        """Returns Net Productive Seconds: Gross - Unproductive Union"""
+        now = timezone.now()
         gross = self.get_gross_seconds(obj)
-        breaks = self.get_total_break_seconds(obj)
-        idle = self.get_total_idle_seconds(obj)
-        return max(0, gross - breaks - idle)
+        
+        unproductive_intervals = []
+        for ws in obj.work_sessions.all():
+            ws_start, ws_end = ws.start_time, ws.end_time or now
+            for bs in ws.break_sessions.all():
+                eff_start = max(bs.start_time, ws_start)
+                eff_end = min(bs.end_time or now, ws_end)
+                if eff_end > eff_start:
+                    unproductive_intervals.append((eff_start, eff_end))
+            for il in ws.idle_logs.all():
+                eff_start = max(il.start_time, ws_start)
+                eff_end = min(il.end_time or now, ws_end)
+                if eff_end > eff_start:
+                    unproductive_intervals.append((eff_start, eff_end))
+                    
+        total_unproductive = int(self.sum_intervals(self.merge_intervals(unproductive_intervals)))
+        return max(0, gross - total_unproductive)
 
     def get_total_break_seconds(self, obj):
-        """Returns total break seconds by summing all break logs"""
+        """Returns total break seconds by summing union of logs intersected with work"""
         now = timezone.now()
-        total = 0
+        all_breaks = []
         for ws in obj.work_sessions.all():
+            ws_start, ws_end = ws.start_time, ws.end_time or now
             for bs in ws.break_sessions.all():
-                end = bs.end_time or now
-                # Match recalculate_status intersection logic for consistency
-                ws_start = ws.start_time
-                ws_end = ws.end_time or now
                 eff_start = max(bs.start_time, ws_start)
-                eff_end = min(end, ws_end)
+                eff_end = min(bs.end_time or now, ws_end)
                 if eff_end > eff_start:
-                    total += int((eff_end - eff_start).total_seconds())
-        return total
+                    all_breaks.append((eff_start, eff_end))
+        return int(self.sum_intervals(self.merge_intervals(all_breaks)))
 
     def get_total_idle_seconds(self, obj):
         """Returns total idle seconds by summing union of logs intersected with work"""
@@ -338,20 +350,30 @@ class AttendanceSerializer(serializers.ModelSerializer):
             win_end = min(end, shift_end)
             if win_end > win_start:
                 intersection_duration += (win_end - win_start).total_seconds()
+                
+        # Gap is calculated as Total Goal - Total Clocked-In Time (which includes work, break, and idle)
+        net_intersection = max(0, intersection_duration)
         
         # 4. Final Gap = Total Goal - Work done so far (Minimum 0)
-        return max(0, int(target_seconds - intersection_duration))
+        return max(0, int(target_seconds - net_intersection))
 
     def get_live_status(self, obj):
+        from django.core.cache import cache
+        # Always check presence first: if the user is offline (no heartbeat), return offline
+        # regardless of what the DB session says. This keeps the serializer consistent with
+        # StatusService.get_user_status which is the authoritative source.
+        is_online = cache.get(f'presence_{obj.user_id}')
+        if not is_online:
+            return 'offline'
+
         active_session = obj.work_sessions.filter(end_time__isnull=True).first()
-        
         if active_session:
             if active_session.break_sessions.filter(end_time__isnull=True).exists():
-                return 'On Break'
+                return 'on_break'
             if active_session.idle_logs.filter(end_time__isnull=True).exists():
-                return 'Idle'
-            return 'Working'
-        return 'Offline'
+                return 'idle'
+            return 'working'
+        return 'online'
 
     def get_first_login(self, obj):
         # Earliest start_time of any work session on this date

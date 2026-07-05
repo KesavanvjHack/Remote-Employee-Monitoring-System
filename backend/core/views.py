@@ -494,7 +494,7 @@ class MeView(APIView):
 
 class UserViewSet(viewsets.ModelViewSet):
     """Full CRUD for users. Admin only for write; Manager read-only."""
-    queryset = User.objects.select_related('department', 'manager').all()
+    queryset = User.objects.select_related('department', 'manager', 'shift').all()
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['role', 'department', 'is_active']
     search_fields = ['email', 'first_name', 'last_name']
@@ -521,7 +521,7 @@ class UserViewSet(viewsets.ModelViewSet):
             # Managers can only see their subordinates
             return User.objects.filter(
                 Q(manager=user) | Q(id=user.id)
-            ).select_related('department', 'manager')
+            ).select_related('department', 'manager', 'shift')
         return super().get_queryset()
 
     def perform_create(self, serializer):
@@ -633,7 +633,7 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
             )
         )
 
-        qs = Attendance.objects.select_related('user', 'reviewed_by').prefetch_related(work_sessions_prefetch)
+        qs = Attendance.objects.select_related('user', 'reviewed_by', 'user__department', 'user__manager', 'user__shift').prefetch_related(work_sessions_prefetch)
         if user.role == 'admin':
             return qs.all()
         if user.role == 'manager':
@@ -853,9 +853,12 @@ class WorkSessionView(APIView):
         if action == 'start':
             try:
                 session, created = WorkSessionService.start_session(request.user, request)
+                today = date.today()
+                attendance = Attendance.objects.filter(user=request.user, date=today).first()
                 return Response({
                     'status': 'started' if created else 'already_running',
                     'session': WorkSessionSerializer(session).data,
+                    'attendance': AttendanceSerializer(attendance).data if attendance else None,
                 })
             except ValueError as e:
                 error_msg = str(e)
@@ -906,17 +909,23 @@ class BreakSessionView(APIView):
             except ValueError as e:
                 return Response({'detail': str(e)}, status=400)
 
+            today = date.today()
+            attendance = Attendance.objects.filter(user=request.user, date=today).first()
             return Response({
                 'status': 'started' if created else 'already_on_break',
                 'break_session': BreakSessionSerializer(break_session).data,
+                'attendance': AttendanceSerializer(attendance).data if attendance else None,
             })
         elif action == 'stop':
             break_session, stopped = BreakSessionService.stop_break(request.user)
             if not stopped:
                 return Response({'detail': 'No active break to stop.'}, status=400)
+            today = date.today()
+            attendance = Attendance.objects.filter(user=request.user, date=today).first()
             return Response({
                 'status': 'stopped',
                 'break_session': BreakSessionSerializer(break_session).data,
+                'attendance': AttendanceSerializer(attendance).data if attendance else None,
             })
         else:
             return Response({'detail': 'action must be "start" or "stop".'}, status=400)
@@ -1023,10 +1032,9 @@ class TeamStatusView(APIView):
     def get(self, request):
         user = request.user
         if user.role == 'admin':
-            # Admins see Managers and Employees
+            # Admins see everyone (admins, managers, employees)
             team = User.objects.filter(
-                is_active=True, 
-                role__in=['manager', 'employee']
+                is_active=True
             ).select_related('department', 'manager', 'shift')
         elif user.role == 'manager':
             # Managers see their subordinates PLUS themselves (to see their own status on the same page)
@@ -1039,17 +1047,25 @@ class TeamStatusView(APIView):
         else:
             team = User.objects.none()
 
+        from core.services import get_user_shift_times, get_user_policy
+        from .models import AttendancePolicy
+        import datetime
+
+        # Pre-fetch all active policies once to avoid N+1 queries in loop
+        policies = list(AttendancePolicy.objects.filter(is_active=True))
+        default_policy = next((p for p in policies if p.department_id is None), None)
+
+        # Batch status check
+        statuses = StatusService.get_users_statuses(team)
+
         result = []
         for member in team:
-            # Optionally skip self if requested, but generally useful to see self too
-            status_data = StatusService.get_user_status(member)
+            status_data = statuses.get(member.id, {'status': 'offline'})
             
             # Check if within shift
             is_within_shift = True
             if member.role == 'employee':
-                from core.services import get_user_shift_times, get_user_policy
-                import datetime
-                policy = get_user_policy(member)
+                policy = next((p for p in policies if p.department_id == member.department_id), None) or default_policy
                 s_time, e_time = get_user_shift_times(member, policy)
                 now_local = timezone.localtime(timezone.now())
                 start_dt = now_local.replace(hour=s_time.hour, minute=s_time.minute, second=0, microsecond=0)
@@ -1072,6 +1088,7 @@ class TeamStatusView(APIView):
                 'status': status_data['status'],
                 'is_within_shift': is_within_shift,
                 'shift_name': member.shift.name if member.shift else None,
+                'user_role': member.role,
             })
         return Response(result)
 
@@ -1092,10 +1109,10 @@ class TeamTimesheetView(APIView):
             subordinate_ids = list(user.subordinates.values_list('id', flat=True))
             # Include the manager themselves in their team timesheet
             subordinate_ids.append(user.id)
-            team = User.objects.filter(id__in=subordinate_ids, is_active=True).select_related('department')
+            team = User.objects.filter(id__in=subordinate_ids, is_active=True).select_related('department', 'manager', 'shift')
         else:
             # Admins see all staff (Managers and Employees)
-            team = User.objects.filter(is_active=True, role__in=['manager', 'employee']).select_related('department')
+            team = User.objects.filter(is_active=True, role__in=['manager', 'employee']).select_related('department', 'manager', 'shift')
 
         # 2. Get today's actual attendance records for these employees
         today = date.today()
@@ -1127,29 +1144,42 @@ class TeamTimesheetView(APIView):
         # Map user ID to their attendance record
         att_map = {a.user_id: a for a in attendances}
 
+        # Pre-fetch all active policies once to avoid N+1 queries in loop
+        from .models import AttendancePolicy
+        policies = list(AttendancePolicy.objects.filter(is_active=True))
+        default_policy = next((p for p in policies if p.department_id is None), None)
+
+        # Batch status check if today
+        statuses = {}
+        if today == date.today():
+            statuses = StatusService.get_users_statuses(team, target_date=today)
+
+        # Bulk serialize all attendance records at once (much faster than per-row)
+        att_serialized = {}
+        if attendances:
+            for record_obj in attendances:
+                att_serialized[str(record_obj.user_id)] = AttendanceSerializer(record_obj).data
+
         enriched = []
         for member in team:
-            member_att = att_map.get(member.id)
+            u_id_str = str(member.id)
+            record = att_serialized.get(u_id_str)
             
-            if member_att:
-                # Use actual attendance data (Serializer handles last_logout and hours)
-                record = AttendanceSerializer(member_att).data
+            if record:
+                record = dict(record)  # make mutable copy
                 record['user_name'] = member.full_name
                 record['user_email'] = member.email
                 if member.department:
                     record['department_name'] = member.department.name
             else:
                 # Generate a dummy 'absent' record
-                from .models import AttendancePolicy
-                policy = AttendancePolicy.objects.filter(is_active=True, department=member.department).first()
-                if not policy:
-                    policy = AttendancePolicy.objects.filter(is_active=True, department__isnull=True).first()
+                policy = next((p for p in policies if p.department_id == member.department_id), None) or default_policy
                 
                 target_seconds = float(policy.min_working_hours * 3600) if policy else 28800 # 8h fallback
 
                 record = {
                     'id': f"dummy_{member.id}_{today}",
-                    'user': member.id,
+                    'user': str(member.id),
                     'user_name': member.full_name,
                     'user_email': member.email,
                     'user_role': member.role,
@@ -1170,9 +1200,9 @@ class TeamTimesheetView(APIView):
                     'last_logout': None
                 }
 
-            # Annotate with live status (only makes sense for today, but we fetch it regardless)
+            # Annotate with live status (only makes sense for today)
             if today == date.today():
-                status_data = StatusService.get_user_status(member)
+                status_data = statuses.get(member.id) or statuses.get(u_id_str) or {'status': 'offline'}
                 record['live_status'] = status_data['status']
             else:
                 record['live_status'] = 'offline'
@@ -1704,7 +1734,7 @@ class ExportView(APIView):
 
     def _export_attendance(self, request, start_dt, end_dt, file_format):
         from django.http import HttpResponse
-        qs = Attendance.objects.select_related('user', 'user__department').all()
+        qs = Attendance.objects.select_related('user', 'user__department', 'user__manager', 'user__shift', 'reviewed_by').all()
         if request.user.role == 'manager':
             subordinate_ids = list(request.user.subordinates.values_list('id', flat=True))
             # Managers should see their own data + subordinates in exports
