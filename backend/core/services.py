@@ -732,7 +732,7 @@ class BreakSessionService:
             start_time=timezone.now(),
         )
         StatusService.broadcast_status_change(user)
-        NotificationService.notify_based_on_role(
+        NotificationService.notify_shift_event(
             user, "On Break", f"{user.full_name} started a break.", "status"
         )
         return break_session, True
@@ -760,7 +760,7 @@ class BreakSessionService:
         open_break.save(update_fields=['end_time', 'updated_at'])
         AttendanceService.recalculate_status(attendance)
         StatusService.broadcast_status_change(user)
-        NotificationService.notify_based_on_role(
+        NotificationService.notify_shift_event(
             user, "Back from Break", f"{user.full_name} returned from break.", "status"
         )
         return open_break, True
@@ -828,14 +828,13 @@ class IdleService:
             start_time=new_start,
         )
         
-        # Determine the notification message
         if reason == 'screen_disconnected':
             title = "Screen Disconnected"
             msg = f"{user.full_name} is now Idle (Screen share disconnected after refresh)."
         else:
             threshold_msg = f"after {policy.idle_threshold_minutes} minutes" if policy else "after threshold"
             title = "Idle Detected"
-            msg = f"You are now Idle ({threshold_msg} of inactivity)."
+            msg = f"{user.full_name} is now Idle ({threshold_msg} of inactivity)."
 
         # 1. Notify Employee, Manager, and Admins
         NotificationService.notify_shift_event(user, title, msg, "status")
@@ -869,7 +868,7 @@ class IdleService:
         AttendanceService.recalculate_status(attendance)
         StatusService.broadcast_status_change(user)
         NotificationService.notify_shift_event(
-            user, "Back to Work", f"You have returned to work.", "status"
+            user, "Back to Work", f"{user.full_name} has returned to work.", "status"
         )
         return open_idle, True
 

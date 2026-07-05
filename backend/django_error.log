@@ -1,0 +1,368 @@
+Internal Server Error: /api/status/team/
+Traceback (most recent call last):
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\exception.py", line 42, in inner
+    response = await get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\base.py", line 253, in _get_response_async
+    response = await wrapped_callback(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 506, in __call__
+    ret = await asyncio.shield(exec_coro)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\current_thread_executor.py", line 40, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 561, in thread_handler
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\decorators\csrf.py", line 56, in wrapper_view
+    return view_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\generic\base.py", line 104, in view
+    return self.dispatch(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 509, in dispatch
+    response = self.handle_exception(exc)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 469, in handle_exception
+    self.raise_uncaught_exception(exc)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 480, in raise_uncaught_exception
+    raise exc
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 497, in dispatch
+    self.initial(request, *args, **kwargs)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 416, in initial
+    self.check_throttles(request)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 359, in check_throttles
+    if not throttle.allow_request(request, self):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\throttling.py", line 123, in allow_request
+    self.history = self.cache.get(self.key, [])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 35, in get
+    if not self._is_expired(f):
+           ^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 153, in _is_expired
+    exp = pickle.load(f)
+          ^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied
+[35;1mHTTP GET /api/status/team/ 500 [1.50, 127.0.0.1:56907][0m
+Internal Server Error: /api/policy/
+Traceback (most recent call last):
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\exception.py", line 42, in inner
+    response = await get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\base.py", line 253, in _get_response_async
+    response = await wrapped_callback(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 506, in __call__
+    ret = await asyncio.shield(exec_coro)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\current_thread_executor.py", line 40, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 561, in thread_handler
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\decorators\csrf.py", line 56, in wrapper_view
+    return view_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\viewsets.py", line 125, in view
+    return self.dispatch(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 509, in dispatch
+    response = self.handle_exception(exc)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 469, in handle_exception
+    self.raise_uncaught_exception(exc)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 480, in raise_uncaught_exception
+    raise exc
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 497, in dispatch
+    self.initial(request, *args, **kwargs)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 416, in initial
+    self.check_throttles(request)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 359, in check_throttles
+    if not throttle.allow_request(request, self):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\throttling.py", line 123, in allow_request
+    self.history = self.cache.get(self.key, [])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 35, in get
+    if not self._is_expired(f):
+           ^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 153, in _is_expired
+    exp = pickle.load(f)
+          ^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied
+[35;1mHTTP GET /api/policy/ 500 [1.58, 127.0.0.1:57058][0m
+Internal Server Error: /api/notifications/
+Traceback (most recent call last):
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\exception.py", line 42, in inner
+    response = await get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\base.py", line 253, in _get_response_async
+    response = await wrapped_callback(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 506, in __call__
+    ret = await asyncio.shield(exec_coro)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\current_thread_executor.py", line 40, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 561, in thread_handler
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\decorators\csrf.py", line 56, in wrapper_view
+    return view_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\viewsets.py", line 125, in view
+    return self.dispatch(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 509, in dispatch
+    response = self.handle_exception(exc)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 469, in handle_exception
+    self.raise_uncaught_exception(exc)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 480, in raise_uncaught_exception
+    raise exc
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 497, in dispatch
+    self.initial(request, *args, **kwargs)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 416, in initial
+    self.check_throttles(request)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 359, in check_throttles
+    if not throttle.allow_request(request, self):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\throttling.py", line 123, in allow_request
+    self.history = self.cache.get(self.key, [])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 35, in get
+    if not self._is_expired(f):
+           ^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 153, in _is_expired
+    exp = pickle.load(f)
+          ^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied
+[35;1mHTTP GET /api/notifications/?is_read=false 500 [1.90, 127.0.0.1:58666][0m
+Internal Server Error: /api/status/team/
+Traceback (most recent call last):
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\exception.py", line 42, in inner
+    response = await get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\base.py", line 253, in _get_response_async
+    response = await wrapped_callback(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 506, in __call__
+    ret = await asyncio.shield(exec_coro)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\current_thread_executor.py", line 40, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 561, in thread_handler
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\decorators\csrf.py", line 56, in wrapper_view
+    return view_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\generic\base.py", line 104, in view
+    return self.dispatch(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 509, in dispatch
+    response = self.handle_exception(exc)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 469, in handle_exception
+    self.raise_uncaught_exception(exc)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 480, in raise_uncaught_exception
+    raise exc
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 497, in dispatch
+    self.initial(request, *args, **kwargs)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 416, in initial
+    self.check_throttles(request)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 359, in check_throttles
+    if not throttle.allow_request(request, self):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\throttling.py", line 123, in allow_request
+    self.history = self.cache.get(self.key, [])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 35, in get
+    if not self._is_expired(f):
+           ^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 153, in _is_expired
+    exp = pickle.load(f)
+          ^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied
+[35;1mHTTP GET /api/status/team/ 500 [1.55, 127.0.0.1:59110][0m
+Internal Server Error: /api/users/
+Traceback (most recent call last):
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\exception.py", line 42, in inner
+    response = await get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\base.py", line 253, in _get_response_async
+    response = await wrapped_callback(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 506, in __call__
+    ret = await asyncio.shield(exec_coro)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\current_thread_executor.py", line 40, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 561, in thread_handler
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\decorators\csrf.py", line 56, in wrapper_view
+    return view_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\viewsets.py", line 125, in view
+    return self.dispatch(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 509, in dispatch
+    response = self.handle_exception(exc)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 469, in handle_exception
+    self.raise_uncaught_exception(exc)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 480, in raise_uncaught_exception
+    raise exc
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 497, in dispatch
+    self.initial(request, *args, **kwargs)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 416, in initial
+    self.check_throttles(request)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 359, in check_throttles
+    if not throttle.allow_request(request, self):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\throttling.py", line 123, in allow_request
+    self.history = self.cache.get(self.key, [])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 35, in get
+    if not self._is_expired(f):
+           ^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 153, in _is_expired
+    exp = pickle.load(f)
+          ^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied
+[35;1mHTTP GET /api/users/ 500 [1.13, 127.0.0.1:59307][0m
+Internal Server Error: /api/sessions/sync/
+[35;1mHTTP POST /api/sessions/sync/ 500 [1.74, 127.0.0.1:54298][0m
+Internal Server Error: /api/status/team/
+Traceback (most recent call last):
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\exception.py", line 42, in inner
+    response = await get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\base.py", line 253, in _get_response_async
+    response = await wrapped_callback(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 506, in __call__
+    ret = await asyncio.shield(exec_coro)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\current_thread_executor.py", line 40, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 561, in thread_handler
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\decorators\csrf.py", line 56, in wrapper_view
+    return view_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\generic\base.py", line 104, in view
+    return self.dispatch(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 509, in dispatch
+    response = self.handle_exception(exc)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 469, in handle_exception
+    self.raise_uncaught_exception(exc)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 480, in raise_uncaught_exception
+    raise exc
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 506, in dispatch
+    response = handler(request, *args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\backend\core\views.py", line 1059, in get
+    statuses = StatusService.get_users_statuses(team)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\backend\core\services.py", line 966, in get_users_statuses
+    cached_presence = cache.get_many(presence_keys) if hasattr(cache, 'get_many') else {}
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\base.py", line 202, in get_many
+    val = self.get(k, self._missing_key, version=version)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 35, in get
+    if not self._is_expired(f):
+           ^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 153, in _is_expired
+    exp = pickle.load(f)
+          ^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied
+[35;1mHTTP GET /api/status/team/ 500 [0.35, 127.0.0.1:59653][0m
+Internal Server Error: /api/users/
+Traceback (most recent call last):
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\exception.py", line 42, in inner
+    response = await get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 557, in thread_handler
+    raise exc_info[1]
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\handlers\base.py", line 253, in _get_response_async
+    response = await wrapped_callback(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 506, in __call__
+    ret = await asyncio.shield(exec_coro)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\current_thread_executor.py", line 40, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\asgiref\sync.py", line 561, in thread_handler
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\views\decorators\csrf.py", line 56, in wrapper_view
+    return view_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\viewsets.py", line 125, in view
+    return self.dispatch(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 509, in dispatch
+    response = self.handle_exception(exc)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 469, in handle_exception
+    self.raise_uncaught_exception(exc)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 480, in raise_uncaught_exception
+    raise exc
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 497, in dispatch
+    self.initial(request, *args, **kwargs)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 416, in initial
+    self.check_throttles(request)
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\views.py", line 359, in check_throttles
+    if not throttle.allow_request(request, self):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\rest_framework\throttling.py", line 123, in allow_request
+    self.history = self.cache.get(self.key, [])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 35, in get
+    if not self._is_expired(f):
+           ^^^^^^^^^^^^^^^^^^^
+  File "D:\REMS\REMS_Finalized\.venv\Lib\site-packages\django\core\cache\backends\filebased.py", line 153, in _is_expired
+    exp = pickle.load(f)
+          ^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied
+[35;1mHTTP GET /api/users/ 500 [0.53, 127.0.0.1:59860][0m

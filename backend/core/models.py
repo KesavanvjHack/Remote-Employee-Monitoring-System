@@ -286,7 +286,7 @@ class WorkSession(models.Model):
         Attendance, on_delete=models.CASCADE, related_name='work_sessions', db_index=True
     )
     start_time = models.DateTimeField()
-    end_time = models.DateTimeField(null=True, blank=True)
+    end_time = models.DateTimeField(null=True, blank=True, db_index=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     device_info = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -314,7 +314,7 @@ class BreakSession(models.Model):
         WorkSession, on_delete=models.CASCADE, related_name='break_sessions', db_index=True
     )
     start_time = models.DateTimeField()
-    end_time = models.DateTimeField(null=True, blank=True)
+    end_time = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -337,7 +337,7 @@ class IdleLog(models.Model):
         WorkSession, on_delete=models.CASCADE, related_name='idle_logs', db_index=True
     )
     start_time = models.DateTimeField()
-    end_time = models.DateTimeField(null=True, blank=True)
+    end_time = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

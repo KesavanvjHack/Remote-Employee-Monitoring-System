@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, useRef, useMemo } from 'react';
+import React, { useContext, useEffect, useState, useRef, useMemo, memo } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { ArrowRightOnRectangleIcon, BellIcon, UsersIcon, Bars3Icon } from '@heroicons/react/24/outline';
 import api from '../api/axios';
@@ -24,6 +24,35 @@ const STATUS_META = {
 const getStatusMeta = (m) => {
   return STATUS_META[m.status] || STATUS_META.offline;
 };
+
+// Memoized member row to prevent massive re-renders when a single status changes
+const MemberRow = React.memo(({ member, themeColor }) => {
+  const st = getStatusMeta(member);
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/40 transition-colors">
+      <div className={`w-8 h-8 rounded-lg bg-gradient-to-br from-${themeColor}-500/20 to-purple-500/20 border border-${themeColor}-500/20 flex items-center justify-center text-${themeColor}-300 font-bold text-xs flex-shrink-0`}>
+        {(member.user_name || member.name || '?').charAt(0).toUpperCase()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-slate-200 truncate">{member.user_name || member.name}</p>
+        <p className="text-xs text-slate-500 truncate">{member.email}</p>
+        {member.shift_name && (
+          <span className={`text-[9px] font-mono mt-0.5 inline-block px-1.5 py-0.5 rounded ${
+            member.shift_name.toLowerCase().includes('night') 
+              ? 'text-rose-400/80 bg-rose-500/10' 
+              : 'text-indigo-400/80 bg-indigo-500/10'
+          }`}>
+            {member.shift_name}
+          </span>
+        )}
+      </div>
+      <span className={`flex items-center gap-1 text-xs font-semibold ${st.text}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
+        {st.label}
+      </span>
+    </div>
+  );
+});
 
 const LiveStatusPanel = ({ liveStatuses, user }) => {
   const [open, setOpen]           = useState(false);
@@ -175,24 +204,9 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
                 {admins.length > 0 && (
                   <div>
                     <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-rose-400">Admins</p>
-                    {admins.map(m => {
-                      const st = STATUS_META[m.status] || STATUS_META.offline;
-                      return (
-                        <div key={m.user_id || m.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/40 transition-colors">
-                          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500/20 to-orange-500/20 border border-rose-500/20 flex items-center justify-center text-rose-300 font-bold text-xs flex-shrink-0">
-                            {(m.user_name || m.name || '?').charAt(0).toUpperCase()}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-200 truncate">{m.user_name || m.name}</p>
-                            <p className="text-xs text-slate-500 truncate">{m.email}</p>
-                          </div>
-                          <span className={`flex items-center gap-1 text-xs font-semibold ${st.text}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-                            {st.label}
-                          </span>
-                        </div>
-                      );
-                    })}
+                    {admins.map(m => (
+                      <MemberRow key={m.user_id || m.id} member={m} themeColor="rose" />
+                    ))}
                   </div>
                 )}
 
@@ -200,33 +214,9 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
                 {managers.length > 0 && (
                   <div>
                     <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-indigo-400">Managers</p>
-                    {managers.map(m => {
-                      const st = STATUS_META[m.status] || STATUS_META.offline;
-                      return (
-                        <div key={m.user_id || m.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/40 transition-colors">
-                          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/20 flex items-center justify-center text-indigo-300 font-bold text-xs flex-shrink-0">
-                            {(m.user_name || m.name || '?').charAt(0).toUpperCase()}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-200 truncate">{m.user_name || m.name}</p>
-                            <p className="text-xs text-slate-500 truncate">{m.email}</p>
-                            {m.shift_name && (
-                              <span className={`text-[9px] font-mono mt-0.5 inline-block px-1.5 py-0.5 rounded ${
-                                m.shift_name.toLowerCase().includes('night') 
-                                  ? 'text-rose-400/80 bg-rose-500/10' 
-                                  : 'text-indigo-400/80 bg-indigo-500/10'
-                              }`}>
-                                {m.shift_name}
-                              </span>
-                            )}
-                          </div>
-                          <span className={`flex items-center gap-1 text-xs font-semibold ${st.text}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-                            {st.label}
-                          </span>
-                        </div>
-                      );
-                    })}
+                    {managers.map(m => (
+                      <MemberRow key={m.user_id || m.id} member={m} themeColor="indigo" />
+                    ))}
                   </div>
                 )}
 
@@ -234,33 +224,9 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
                 {employees.length > 0 && (
                   <div>
                     <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-cyan-400">Employees</p>
-                    {employees.map(m => {
-                      const st = getStatusMeta(m);
-                      return (
-                        <div key={m.user_id || m.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/40 transition-colors">
-                          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-cyan-500/20 flex items-center justify-center text-cyan-300 font-bold text-xs flex-shrink-0">
-                            {(m.user_name || m.name || '?').charAt(0).toUpperCase()}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-200 truncate">{m.user_name || m.name}</p>
-                            <p className="text-xs text-slate-500 truncate">{m.email}</p>
-                            {m.shift_name && (
-                              <span className={`text-[9px] font-mono mt-0.5 inline-block px-1.5 py-0.5 rounded ${
-                                m.shift_name.toLowerCase().includes('night') 
-                                  ? 'text-rose-400/80 bg-rose-500/10' 
-                                  : 'text-indigo-400/80 bg-indigo-500/10'
-                              }`}>
-                                {m.shift_name}
-                              </span>
-                            )}
-                          </div>
-                          <span className={`flex items-center gap-1 text-xs font-semibold ${st.text}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-                            {st.label}
-                          </span>
-                        </div>
-                      );
-                    })}
+                    {employees.map(m => (
+                      <MemberRow key={m.user_id || m.id} member={m} themeColor="cyan" />
+                    ))}
                   </div>
                 )}
 

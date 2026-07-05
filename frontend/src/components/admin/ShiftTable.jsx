@@ -18,6 +18,140 @@ const parseTime12hToMinutes = (time12h) => {
   return hours * 60 + minutes;
 };
 
+// Memoized row component to prevent the entire table from re-rendering
+// when a single user's live status changes in the websocket dictionary.
+const ShiftTableRow = React.memo(({ record, user, wsStatus, handleOverride, todayStr }) => {
+  const now = new Date();
+  const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+  const istDate = new Date(istString);
+  
+  const [recYear, recMonth, recDay] = record.date.split('-').map(Number);
+  const shiftStartDate = new Date(recYear, recMonth - 1, recDay);
+  const startMin = parseTime12hToMinutes(record.shift_start || '09:30 AM');
+  shiftStartDate.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
+
+  const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
+  const endMin = parseTime12hToMinutes(record.shift_end || '05:30 PM');
+  shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+  if (endMin <= startMin) {
+    shiftEndDate.setDate(shiftEndDate.getDate() + 1);
+  }
+
+  const isBeforeShiftStart = istDate < shiftStartDate;
+  const isBeforeShiftEnd = istDate < shiftEndDate;
+
+  const isToday = record.date === todayStr;
+  const yesterday = new Date(istDate);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+  const isRecordActive = isToday || (record.date === yesterdayStr && endMin <= startMin);
+
+  const isCalculating = isRecordActive && 
+                      isBeforeShiftEnd &&
+                      record.status?.toLowerCase() !== 'present' && 
+                      record.status?.toLowerCase() !== 'on_leave' && 
+                      record.status?.toLowerCase() !== 'holiday' &&
+                      record.status?.toLowerCase() !== 'half_day';
+  
+  let displayStatus = record.status;
+  let isNotStartedState = false;
+  if (isCalculating) {
+    if (isBeforeShiftStart && !record.first_login) {
+      displayStatus = 'Not Started';
+      isNotStartedState = true;
+    } else {
+      displayStatus = 'Calculating...';
+    }
+  }
+
+  const mapStatusToLiveLabel = (status) => {
+    if (!status) return 'Offline';
+    const s = status.toLowerCase();
+    if (s === 'working') return 'Working';
+    if (s === 'on_break' || s === 'on break') return 'On Break';
+    if (s === 'idle') return 'Idle';
+    if (s === 'online') return 'Online';
+    return 'Offline';
+  };
+
+  const resolvedStatusStr = wsStatus ? (typeof wsStatus === 'object' ? wsStatus.status : wsStatus) : null;
+  const resolvedLiveStatus = resolvedStatusStr ? mapStatusToLiveLabel(resolvedStatusStr) : (record.live_status || 'Offline');
+  
+  const normalizedStatus = record.status?.toLowerCase();
+
+  return (
+    <tr className="hover:bg-slate-700/30 transition-colors">
+      <td className="px-2 py-3">
+        <div className="flex flex-col items-center sm:items-start text-center sm:text-left">
+          <span className="text-xs font-semibold text-white">{record.user_name}</span>
+          <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{record.user_email}</span>
+        </div>
+      </td>
+      <td className="px-2 py-3 text-center text-xs text-slate-300 font-semibold">
+        {record.manager_name || '—'}
+      </td>
+      <td className="px-2 py-3 text-center font-mono leading-tight whitespace-nowrap">
+        <span className={`block text-xs font-bold ${isCalculating ? 'text-rose-400' : 'text-indigo-400'}`}>
+          {record.first_login ? format(parseISO(record.first_login), 'hh:mm a') : '--:--'}
+        </span>
+        <span className="block text-slate-600 text-[10px] my-0.5">to</span>
+        <span className="block text-rose-400 text-xs font-bold">
+          {record.last_logout && record.last_logout !== '--:--' ? format(parseISO(record.last_logout), 'hh:mm a') : '--:--'}
+        </span>
+      </td>
+      <td className="px-2 py-3 text-center">
+        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center justify-center gap-1 w-max mx-auto
+          ${isCalculating ? (isNotStartedState ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20') :
+            normalizedStatus === 'present' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
+            normalizedStatus === 'absent' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+            normalizedStatus === 'half_day' || normalizedStatus === 'half day' ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' :
+            normalizedStatus === 'on_leave' || normalizedStatus === 'on leave' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' :
+            'bg-slate-500/10 text-slate-400 border border-slate-500/20'}
+        `}>
+          {displayStatus === 'on_leave' ? 'On Leave' : displayStatus === 'half_day' ? 'Half Day' : displayStatus}
+        </span>
+      </td>
+      <td className="px-2 py-3 text-emerald-400 font-mono text-xs text-center">
+         <LiveDuration initialSeconds={record.total_work_seconds} status={resolvedLiveStatus} type="work" isToday={isRecordActive} />
+      </td>
+      <td className="px-2 py-3 text-cyan-400 font-mono text-xs text-center">
+        <LiveDuration initialSeconds={record.total_break_seconds} status={resolvedLiveStatus} type="break" isToday={isRecordActive} />
+      </td>
+      <td className="px-2 py-3 text-amber-400 font-mono text-xs text-center">
+        <LiveDuration initialSeconds={record.total_idle_seconds} status={resolvedLiveStatus} type="idle" isToday={isRecordActive} />
+      </td>
+      <td className="px-2 py-3 text-orange-400/90 font-mono text-xs text-center font-bold whitespace-nowrap">
+         {record.first_login && record.missing_seconds != null ? (
+            <LiveDuration initialSeconds={record.missing_seconds} status={resolvedLiveStatus} type="gap" isToday={isRecordActive} isWithinShift={isCalculating} />
+         ) : '—'}
+      </td>
+      <td className="px-2 py-3 text-center">
+        {record.is_flagged ? (
+          <span className="text-rose-400 font-bold text-[10px] flex items-center justify-center gap-1 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 uppercase tracking-tighter" title={record.flag_reason}>
+            <FlagIcon className="h-3 w-3" /> Alert
+          </span>
+        ) : (
+          <span className="text-slate-600 font-mono text-sm text-center">—</span>
+        )}
+      </td>
+      <td className="px-2 py-3 text-slate-400 text-[10px] italic truncate max-w-[150px] text-center">
+        {record.manager_remark || record.flag_reason || '—'}
+      </td>
+      {user?.role === 'admin' && (
+        <td className="px-2 py-3 text-center">
+          <div className="flex items-center justify-center gap-1">
+            <button onClick={() => handleOverride(record, 'present')} className="w-6 h-6 flex items-center justify-center bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded hover:bg-emerald-500/20" title="Mark Present">P</button>
+            <button onClick={() => handleOverride(record, 'half_day')} className="w-6 h-6 flex items-center justify-center bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded hover:bg-sky-500/20" title="Mark Half Day">H</button>
+            <button onClick={() => handleOverride(record, 'absent')} className="w-6 h-6 flex items-center justify-center bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded hover:bg-rose-500/20" title="Mark Absent">A</button>
+          </div>
+        </td>
+      )}
+    </tr>
+  );
+});
+
+
 const ShiftTable = ({ title, records, lastUpdated, fetchData, loading, dateFilter, startDate, endDate, handleOverride, user, liveStatuses }) => {
   const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(records, 15);
   const todayStr = new Date().toISOString().split('T')[0];
@@ -84,135 +218,17 @@ const ShiftTable = ({ title, records, lastUpdated, fetchData, loading, dateFilte
             </tr>
           ) : (
             currentData.map((record) => {
-              const now = new Date();
-              const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-              const istDate = new Date(istString);
-              
-              const [recYear, recMonth, recDay] = record.date.split('-').map(Number);
-              const shiftStartDate = new Date(recYear, recMonth - 1, recDay);
-              const startMin = parseTime12hToMinutes(record.shift_start || '09:30 AM');
-              shiftStartDate.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
-
-              const shiftEndDate = new Date(recYear, recMonth - 1, recDay);
-              const endMin = parseTime12hToMinutes(record.shift_end || '05:30 PM');
-              shiftEndDate.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
-              if (endMin <= startMin) {
-                shiftEndDate.setDate(shiftEndDate.getDate() + 1);
-              }
-
-              const isBeforeShiftStart = istDate < shiftStartDate;
-              const isBeforeShiftEnd = istDate < shiftEndDate;
-
-              const isToday = record.date === todayStr;
-              const yesterday = new Date(istDate);
-              yesterday.setDate(yesterday.getDate() - 1);
-              const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-              const isRecordActive = isToday || (record.date === yesterdayStr && endMin <= startMin);
-
-              const isCalculating = isRecordActive && 
-                                  isBeforeShiftEnd &&
-                                  record.status?.toLowerCase() !== 'present' && 
-                                  record.status?.toLowerCase() !== 'on_leave' && 
-                                  record.status?.toLowerCase() !== 'holiday' &&
-                                  record.status?.toLowerCase() !== 'half_day';
-              
-              let displayStatus = record.status;
-              let isNotStartedState = false;
-              if (isCalculating) {
-                if (isBeforeShiftStart && !record.first_login) {
-                  displayStatus = 'Not Started';
-                  isNotStartedState = true;
-                } else {
-                  displayStatus = 'Calculating...';
-                }
-              }
-
-              const mapStatusToLiveLabel = (status) => {
-                if (!status) return 'Offline';
-                const s = status.toLowerCase();
-                if (s === 'working') return 'Working';
-                if (s === 'on_break' || s === 'on break') return 'On Break';
-                if (s === 'idle') return 'Idle';
-                if (s === 'online') return 'Online';
-                return 'Offline';
-              };
-
               const lookupKey = String(record.user || '').toLowerCase();
               const wsStatus = liveStatuses[lookupKey];
-              const resolvedStatusStr = wsStatus ? (typeof wsStatus === 'object' ? wsStatus.status : wsStatus) : null;
-              const resolvedLiveStatus = resolvedStatusStr ? mapStatusToLiveLabel(resolvedStatusStr) : (record.live_status || 'Offline');
-              
-              const normalizedStatus = record.status?.toLowerCase();
-
               return (
-                <tr key={record.id} className="hover:bg-slate-700/30 transition-colors">
-                  <td className="px-2 py-3">
-                    <div className="flex flex-col items-center sm:items-start text-center sm:text-left">
-                      <span className="text-xs font-semibold text-white">{record.user_name}</span>
-                      <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{record.user_email}</span>
-                    </div>
-                  </td>
-                  <td className="px-2 py-3 text-center text-xs text-slate-300 font-semibold">
-                    {record.manager_name || '—'}
-                  </td>
-                  <td className="px-2 py-3 text-center font-mono leading-tight whitespace-nowrap">
-                    <span className={`block text-xs font-bold ${isCalculating ? 'text-rose-400' : 'text-indigo-400'}`}>
-                      {record.first_login ? format(parseISO(record.first_login), 'hh:mm a') : '--:--'}
-                    </span>
-                    <span className="block text-slate-600 text-[10px] my-0.5">to</span>
-                    <span className="block text-rose-400 text-xs font-bold">
-                      {record.last_logout && record.last_logout !== '--:--' ? format(parseISO(record.last_logout), 'hh:mm a') : '--:--'}
-                    </span>
-                  </td>
-                  <td className="px-2 py-3 text-center">
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center justify-center gap-1 w-max mx-auto
-                      ${isCalculating ? (isNotStartedState ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20') :
-                        normalizedStatus === 'present' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
-                        normalizedStatus === 'absent' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
-                        normalizedStatus === 'half_day' || normalizedStatus === 'half day' ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' :
-                        normalizedStatus === 'on_leave' || normalizedStatus === 'on leave' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' :
-                        'bg-slate-500/10 text-slate-400 border border-slate-500/20'}
-                    `}>
-                      {displayStatus === 'on_leave' ? 'On Leave' : displayStatus === 'half_day' ? 'Half Day' : displayStatus}
-                    </span>
-                  </td>
-                  <td className="px-2 py-3 text-emerald-400 font-mono text-xs text-center">
-                     <LiveDuration initialSeconds={record.total_work_seconds} status={resolvedLiveStatus} type="work" isToday={isRecordActive} />
-                  </td>
-                  <td className="px-2 py-3 text-cyan-400 font-mono text-xs text-center">
-                    <LiveDuration initialSeconds={record.total_break_seconds} status={resolvedLiveStatus} type="break" isToday={isRecordActive} />
-                  </td>
-                  <td className="px-2 py-3 text-amber-400 font-mono text-xs text-center">
-                    <LiveDuration initialSeconds={record.total_idle_seconds} status={resolvedLiveStatus} type="idle" isToday={isRecordActive} />
-                  </td>
-                  <td className="px-2 py-3 text-orange-400/90 font-mono text-xs text-center font-bold whitespace-nowrap">
-                     {record.first_login && record.missing_seconds != null ? (
-                        <LiveDuration initialSeconds={record.missing_seconds} status={resolvedLiveStatus} type="gap" isToday={isRecordActive} isWithinShift={isCalculating} />
-                     ) : '—'}
-                  </td>
-                  <td className="px-2 py-3 text-center">
-                    {record.is_flagged ? (
-                      <span className="text-rose-400 font-bold text-[10px] flex items-center justify-center gap-1 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 uppercase tracking-tighter" title={record.flag_reason}>
-                        <FlagIcon className="h-3 w-3" /> Alert
-                      </span>
-                    ) : (
-                      <span className="text-slate-600 font-mono text-sm text-center">—</span>
-                    )}
-                  </td>
-                  <td className="px-2 py-3 text-slate-400 text-[10px] italic truncate max-w-[150px] text-center">
-                    {record.manager_remark || record.flag_reason || '—'}
-                  </td>
-                  {user?.role === 'admin' && (
-                    <td className="px-2 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button onClick={() => handleOverride(record, 'present')} className="w-6 h-6 flex items-center justify-center bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded hover:bg-emerald-500/20" title="Mark Present">P</button>
-                        <button onClick={() => handleOverride(record, 'half_day')} className="w-6 h-6 flex items-center justify-center bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded hover:bg-sky-500/20" title="Mark Half Day">H</button>
-                        <button onClick={() => handleOverride(record, 'absent')} className="w-6 h-6 flex items-center justify-center bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded hover:bg-rose-500/20" title="Mark Absent">A</button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
+                <ShiftTableRow 
+                  key={record.id} 
+                  record={record} 
+                  user={user} 
+                  wsStatus={wsStatus} 
+                  handleOverride={handleOverride} 
+                  todayStr={todayStr}
+                />
               );
             })
           )}
