@@ -25,7 +25,7 @@ export const AuthProvider = ({ children }) => {
   // Per-user WS/action lock: Map<userId_lower, expiryTimestamp>
   // Prevents stale HTTP polls from overwriting fresh WS/action status for 12s
   const wsLockMapRef = useRef(new Map());
-  const [lastActivity, setLastActivity] = useState(Date.now());
+  const lastActivityRef = useRef(Date.now());
   const [showWarning, setShowWarning] = useState(false);
   const [warningTimeLeft, setWarningTimeLeft] = useState('');
   const [isWithinShift, setIsWithinShift] = useState(true);
@@ -34,7 +34,6 @@ export const AuthProvider = ({ children }) => {
   
   const wsRef = useRef(null);
   const heartbeatRef = useRef(null);
-  const lastActivityRef = useRef(Date.now());
   const currentUserRef = useRef(null); // Always-current user ref for WS closures
 
   // Smart status setter — uses per-user wsLockMapRef to prevent HTTP poll flicker.
@@ -387,7 +386,6 @@ export const AuthProvider = ({ children }) => {
 
   const refreshActivity = useCallback(() => {
     lastActivityRef.current = Date.now();
-    setLastActivity(Date.now());
     if (showWarning) setShowWarning(false);
   }, [showWarning]);
 
@@ -467,14 +465,14 @@ export const AuthProvider = ({ children }) => {
     const checkTimeout = () => {
       // REQUIREMENT: Working status must keep session active
       if (status === 'working') {
-        setLastActivity(Date.now());
+        lastActivityRef.current = Date.now();
         if (showWarning) setShowWarning(false);
         return;
       }
 
       const timeoutMs = policy.session_timeout_hours * 60 * 60 * 1000;
       const warningMs = Math.max(0, timeoutMs - (5 * 60 * 1000)); // 5 mins before
-      const idleMs = Date.now() - lastActivity;
+      const idleMs = Date.now() - lastActivityRef.current;
 
       if (idleMs >= timeoutMs) {
         console.warn('Session timeout reached due to inactivity');
@@ -492,7 +490,7 @@ export const AuthProvider = ({ children }) => {
 
     const interval = setInterval(checkTimeout, 5000); 
     return () => clearInterval(interval);
-  }, [user, policy, logout, status, lastActivity, showWarning]);
+  }, [user, policy, logout, status, showWarning]);
 
   // Reset activity timestamp when status becomes 'working' to give employee a fresh grace period
   // NOTE: The liveStatuses mirror that was previously here has been REMOVED.
@@ -502,7 +500,6 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     if (status === 'working') {
         lastActivityRef.current = Date.now();
-        setLastActivity(Date.now());
     }
   }, [status]);
 
@@ -583,7 +580,6 @@ export const AuthProvider = ({ children }) => {
     status,
     setStatus,
     policy,
-    lastActivity,
     refreshActivity,
     login,
     logout,
