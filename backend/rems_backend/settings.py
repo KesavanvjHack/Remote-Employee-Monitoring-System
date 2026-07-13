@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
+import dj_database_url
 
 load_dotenv()
 
@@ -46,6 +47,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -77,14 +79,10 @@ WSGI_APPLICATION = 'rems_backend.wsgi.application'
 ASGI_APPLICATION = 'rems_backend.asgi.application'
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'rems_db',
-        'USER': 'root',
-        'PASSWORD': 'root',
-        'HOST': 'localhost',
-        'PORT': '3306',
-    }
+    'default': dj_database_url.config(
+        default=os.getenv('DATABASE_URL', 'mysql://root:root@localhost:3306/rems_db'),
+        conn_max_age=600
+    )
 }
 
 AUTH_USER_MODEL = 'core.User'
@@ -125,6 +123,14 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5175',
     'http://127.0.0.1:5175',
 ]
+
+frontend_url = os.getenv('FRONTEND_URL')
+if frontend_url:
+    CORS_ALLOWED_ORIGINS.append(frontend_url)
+
+render_external_hostname = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if render_external_hostname:
+    ALLOWED_HOSTS.append(render_external_hostname)
 CORS_ALLOW_CREDENTIALS = True
 
 # ─── Django REST Framework ─────────────────────────────────────────────────────
@@ -149,7 +155,8 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '30/minute',
         'user': '120/minute'
-    }
+    },
+    'URL_FORMAT_OVERRIDE': None
 }
 
 # ─── SimpleJWT ─────────────────────────────────────────────────────────────────

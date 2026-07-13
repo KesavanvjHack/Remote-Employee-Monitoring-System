@@ -116,9 +116,22 @@ class MonitoringSessionViewSet(viewsets.ModelViewSet):
         active_sessions = MonitoringSession.objects.filter(
             is_active=True
         ).select_related('employee')
+        
         # Optional: Filter by manager if requester is a manager
         if request.user.role == 'manager':
             active_sessions = active_sessions.filter(employee__manager=request.user)
             
-        serializer = MonitoringSessionSerializer(active_sessions, many=True)
+        from core.services import StatusService
+        valid_sessions = []
+        for session in active_sessions:
+            status_data = StatusService.get_user_status(session.employee)
+            # Only show screen sharing if the user is actually working/idle/on_break
+            if status_data['status'] in ['working', 'idle', 'on_break']:
+                valid_sessions.append(session)
+            elif status_data['status'] == 'offline':
+                # Auto-cleanup stale sessions
+                session.is_active = False
+                session.save()
+            
+        serializer = MonitoringSessionSerializer(valid_sessions, many=True)
         return Response(serializer.data)
