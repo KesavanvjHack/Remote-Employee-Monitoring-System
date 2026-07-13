@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 
 const usePagination = (data, itemsPerPage = 15) => {
   const [currentPage, setCurrentPage] = useState(1);
@@ -25,7 +25,7 @@ const usePagination = (data, itemsPerPage = 15) => {
   };
 
   // Reset to page 1 if data changes significantly or we are out of bounds
-  useMemo(() => {
+  useEffect(() => {
     if (currentPage > totalPages && totalPages > 0) {
       setCurrentPage(totalPages);
     }

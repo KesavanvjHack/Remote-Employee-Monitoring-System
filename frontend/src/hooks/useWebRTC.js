@@ -73,18 +73,14 @@ const useWebRTC = () => {
             // 2. Media Capture (Do this FIRST)
             let captureStream = null;
             while (true) {
-                try {
-                    captureStream = await navigator.mediaDevices.getDisplayMedia({
-                        video: { 
-                            displaySurface: 'monitor',
-                            width: { ideal: 1920, max: 1920 },
-                            height: { ideal: 1080, max: 1080 },
-                            frameRate: { ideal: 30, max: 60 }
-                        }
-                    });
-                } catch (e) {
-                    throw e; // Rethrow to catch block (e.g. user cancelled)
-                }
+                captureStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { 
+                        displaySurface: 'monitor',
+                        width: { ideal: 1920, max: 1920 },
+                        height: { ideal: 1080, max: 1080 },
+                        frameRate: { ideal: 30, max: 60 }
+                    }
+                });
 
                 const track = captureStream.getVideoTracks()[0];
                 if (track.getSettings().displaySurface === 'monitor') {

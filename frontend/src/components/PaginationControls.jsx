@@ -2,7 +2,7 @@ import React from 'react';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
 
 const PaginationControls = ({ currentPage, totalPages, goToPage, nextPage, prevPage }) => {
-  if (totalPages <= 1) return null;
+  if (totalPages === 0) return null;
 
   const renderPageNumbers = () => {
     const pages = [];

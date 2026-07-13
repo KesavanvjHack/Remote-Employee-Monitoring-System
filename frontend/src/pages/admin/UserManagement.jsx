@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import { PencilSquareIcon, TrashIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
-import ResponsiveTable from '../../components/ResponsiveTable';
 import toast from 'react-hot-toast';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const UserManagement = () => {
   const [users, setUsers] = useState([]);
@@ -195,6 +196,8 @@ const UserManagement = () => {
     toast.success('Users exported successfully!');
   };
 
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(users, 20);
+
   if (loading) return <div className="text-indigo-400 p-8 text-center animate-pulse">Loading Users...</div>;
 
   return (
@@ -327,7 +330,7 @@ const UserManagement = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
-              {users.map((user) => (
+              {currentData.map((user) => (
                 <tr key={user.id} className="hover:bg-slate-700/20 transition-colors">
                   <td className="px-6 py-4 font-medium text-slate-200">{user.full_name}</td>
                   <td className="px-6 py-4">{user.email}</td>
@@ -370,12 +373,21 @@ const UserManagement = () => {
               ))}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan="7" className="px-6 py-8 text-center text-slate-500">No users found</td>
+                  <td colSpan="8" className="px-6 py-8 text-center text-slate-500">No users found</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        {users.length > 0 && (
+          <PaginationControls 
+            currentPage={currentPage}
+            totalPages={totalPages}
+            goToPage={goToPage}
+            nextPage={nextPage}
+            prevPage={prevPage}
+          />
+        )}
       </div>
 
       {/* User Modal */}

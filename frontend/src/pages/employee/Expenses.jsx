@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { CurrencyDollarIcon, PlusIcon, DocumentTextIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const Expenses = () => {
   const [expenses, setExpenses] = useState([]);
@@ -78,6 +80,8 @@ const Expenses = () => {
     }
   };
 
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(expenses, 10);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
@@ -125,42 +129,51 @@ const Expenses = () => {
         ) : expenses.length === 0 ? (
           <div className="p-8 text-center text-slate-400 italic">No expense reports submitted yet.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-400">
-              <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
-                <tr>
-                  <th className="px-6 py-4 font-medium">Title</th>
-                  <th className="px-6 py-4 font-medium">Amount</th>
-                  <th className="px-6 py-4 font-medium">Status</th>
-                  <th className="px-6 py-4 font-medium">Date Submitted</th>
-                  <th className="px-6 py-4 font-medium text-right">Receipt</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700">
-                {expenses.map(exp => (
-                  <tr key={exp.id} className="hover:bg-slate-700/20 transition-colors">
-                    <td className="px-6 py-4 font-medium text-slate-200">{exp.title}</td>
-                    <td className="px-6 py-4 text-slate-200 font-semibold">${parseFloat(exp.amount).toFixed(2)}</td>
-                    <td className="px-6 py-4 text-xs font-semibold capitalize">
-                       <span className={`px-2 py-1 rounded-full ${exp.status === 'approved' ? 'bg-emerald-500/10 text-emerald-400' : exp.status === 'rejected' ? 'bg-rose-500/10 text-rose-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                         {exp.status}
-                       </span>
-                    </td>
-                    <td className="px-6 py-4 text-slate-500">{new Date(exp.created_at).toLocaleDateString()}</td>
-                    <td className="px-6 py-4 text-right">
-                       {exp.receipt_image ? (
-                          <a href={exp.receipt_image} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1">
-                            <DocumentTextIcon className="h-4 w-4" /> View
-                          </a>
-                       ) : (
-                         <span className="text-slate-600 italic">No receipt</span>
-                       )}
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-400">
+                <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
+                  <tr>
+                    <th className="px-6 py-4 font-medium">Title</th>
+                    <th className="px-6 py-4 font-medium">Amount</th>
+                    <th className="px-6 py-4 font-medium">Status</th>
+                    <th className="px-6 py-4 font-medium">Date Submitted</th>
+                    <th className="px-6 py-4 font-medium text-right">Receipt</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-700/50">
+                  {currentData.map((exp) => (
+                    <tr key={exp.id} className="hover:bg-slate-750/50 transition-colors text-sm">
+                      <td className="px-6 py-4 font-medium text-slate-200">{exp.title}</td>
+                      <td className="px-6 py-4 text-slate-200 font-semibold">${parseFloat(exp.amount).toFixed(2)}</td>
+                      <td className="px-6 py-4 text-xs font-semibold capitalize">
+                         <span className={`px-2 py-1 rounded-full ${exp.status === 'approved' ? 'bg-emerald-500/10 text-emerald-400' : exp.status === 'rejected' ? 'bg-rose-500/10 text-rose-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                           {exp.status}
+                         </span>
+                      </td>
+                      <td className="px-6 py-4 text-slate-500">{new Date(exp.created_at).toLocaleDateString()}</td>
+                      <td className="px-6 py-4 text-right">
+                         {exp.receipt_image ? (
+                            <a href={exp.receipt_image} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1">
+                              <DocumentTextIcon className="h-4 w-4" /> View
+                            </a>
+                         ) : (
+                           <span className="text-slate-600 italic">No receipt</span>
+                         )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <PaginationControls 
+              currentPage={currentPage}
+              totalPages={totalPages}
+              goToPage={goToPage}
+              nextPage={nextPage}
+              prevPage={prevPage}
+            />
+          </>
         )}
       </div>
 

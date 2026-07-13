@@ -3,6 +3,8 @@ import api from '../../api/axios';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 import { CalendarIcon, PaperAirplaneIcon, TrashIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const LeaveRequest = () => {
   const [leaves, setLeaves] = useState([]);
@@ -142,6 +144,8 @@ const LeaveRequest = () => {
   };
 
   // Loading skeletons for a premium feel
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(leaves, 15);
+
   if (loading) {
     return (
       <div className="space-y-6 page-fade-in">
@@ -157,15 +161,6 @@ const LeaveRequest = () => {
     );
   }
 
-  // Filter leaves for display: Only show CURRENT WEEK records
-  const now = new Date();
-  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
-  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
-  
-  const weeklyLeaves = leaves.filter((leave) => {
-    const leaveStart = new Date(leave.from_date);
-    return isWithinInterval(leaveStart, { start: weekStart, end: weekEnd });
-  });
 
   return (
     <div className="space-y-6 page-fade-in">
@@ -301,7 +296,7 @@ const LeaveRequest = () => {
         {/* Leave history table */}
         <div className="lg:col-span-2 bg-slate-800/50 border border-slate-700 rounded-2xl overflow-hidden">
           <div className="p-6 border-b border-slate-700">
-            <h2 className="text-lg font-semibold text-white">This Week's Leave History</h2>
+            <h2 className="text-lg font-semibold text-white">Leave History</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300">
@@ -315,7 +310,14 @@ const LeaveRequest = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
-                {weeklyLeaves.map((leave) => (
+                {currentData.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="px-4 py-8 text-center text-slate-500">
+                      No leave requests found
+                    </td>
+                  </tr>
+                ) : (
+                  currentData.map((leave) => (
                   <tr key={leave.id} className="hover:bg-slate-700/20 transition-colors">
                     <td className="px-6 py-4 font-medium text-slate-200 capitalize tracking-wide">{leave.leave_type}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-400 font-mono">
@@ -346,15 +348,17 @@ const LeaveRequest = () => {
                       )}
                     </td>
                   </tr>
-                ))}
-                {weeklyLeaves.length === 0 && (
-                  <tr>
-                    <td colSpan="5" className="px-6 py-8 text-center text-slate-500">No leave requests this week</td>
-                  </tr>
-                )}
+                )))}
               </tbody>
             </table>
           </div>
+          <PaginationControls 
+            currentPage={currentPage}
+            totalPages={totalPages}
+            goToPage={goToPage}
+            nextPage={nextPage}
+            prevPage={prevPage}
+          />
         </div>
       </div>
     </div>

@@ -9,13 +9,13 @@ const ManagerDashboard = () => {
   const [summary, setSummary] = useState(null);
   const [teamStats, setTeamStats] = useState([]);
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
     fetchData();
   }, []);
 
   const fetchData = async () => {
     try {
+      setLoading(true);
       const [sumRes, teamRes] = await Promise.all([
         api.get('/reports/?type=summary'),
         api.get('/reports/?type=team')
@@ -64,7 +64,9 @@ const ManagerDashboard = () => {
 
   return (
     <div className="space-y-6 page-fade-in">
-      <h1 className="text-2xl font-bold tracking-tight text-white mb-6">Manager Dashboard</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <h1 className="text-2xl font-bold tracking-tight text-white">Manager Dashboard</h1>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
         <StatCard 
@@ -102,7 +104,7 @@ const ManagerDashboard = () => {
       <div className="bg-slate-800/50 border border-slate-700 p-6 rounded-2xl mt-8">
         <h2 className="text-lg font-semibold text-white mb-6">Team Productivity Overview</h2>
         <div className="h-[400px] w-full min-w-0" style={{ position: 'relative' }}>
-          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300} debounce={50}>
+          <ResponsiveContainer width="99%" height="100%" minHeight={300} debounce={50}>
             <BarChart data={teamStats} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
               <XAxis dataKey="user_name" stroke="#94a3b8" />

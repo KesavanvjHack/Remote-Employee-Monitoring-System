@@ -44,6 +44,10 @@ class MonitoringSessionViewSet(viewsets.ModelViewSet):
     def start_monitoring(self, request):
         user = request.user
         
+        # Prevent admins from sharing their screen
+        if user.role == 'admin':
+            return Response({'detail': 'Screen monitoring is for employees only'}, status=status.HTTP_403_FORBIDDEN)
+        
         policy = get_user_policy(user)
         s_time, e_time = get_user_shift_times(user, policy)
             
@@ -112,10 +116,17 @@ class MonitoringSessionViewSet(viewsets.ModelViewSet):
         if request.user.role not in ['admin', 'manager']:
             return Response({'detail': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
         
-        # Show ALL sessions currently marked as active
+        # Show ALL sessions currently marked as active and whose shift hasn't expired
+        now = timezone.now()
         active_sessions = MonitoringSession.objects.filter(
-            is_active=True
+            is_active=True,
+            shift_end__gte=now
         ).select_related('employee')
+        
+        # Cleanup expired sessions
+        expired_sessions = MonitoringSession.objects.filter(is_active=True, shift_end__lt=now)
+        if expired_sessions.exists():
+            expired_sessions.update(is_active=False)
         
         # Optional: Filter by manager if requester is a manager
         if request.user.role == 'manager':
@@ -130,6 +141,11 @@ class MonitoringSessionViewSet(viewsets.ModelViewSet):
                 valid_sessions.append(session)
             elif status_data['status'] == 'offline':
                 # Auto-cleanup stale sessions
+                session.is_active = False
+                session.save()
+            elif status_data['status'] == 'online':
+                # If they are online but haven't started work, they shouldn't show up.
+                # We also mark their monitoring session as inactive since they haven't started work.
                 session.is_active = False
                 session.save()
             

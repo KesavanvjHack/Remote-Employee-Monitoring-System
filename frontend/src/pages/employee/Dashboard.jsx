@@ -12,16 +12,16 @@ const EmployeeDashboard = () => {
   const [summary, setSummary] = useState(null);
   const [dailyData, setDailyData] = useState([]);
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
     fetchData();
   }, []);
 
   const fetchData = async () => {
     try {
+      setLoading(true);
       const [sumRes, dailyRes] = await Promise.all([
         api.get('/reports/?type=summary'),
-        api.get('/reports/?type=daily&days=7')
+        api.get('/reports/?type=daily')
       ]);
       setSummary(sumRes.data);
       setDailyData(dailyRes.data);
@@ -67,7 +67,9 @@ const EmployeeDashboard = () => {
 
   return (
     <div className="space-y-6 page-fade-in">
-      <h1 className="text-2xl font-bold tracking-tight text-white mb-6">Welcome back, {user?.full_name?.split(' ')[0]}</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <h1 className="text-2xl font-bold tracking-tight text-white">Welcome back, {user?.full_name?.split(' ')[0]}</h1>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
@@ -99,7 +101,7 @@ const EmployeeDashboard = () => {
       <div className="bg-slate-800/50 border border-slate-700 p-6 rounded-2xl mt-8">
         <h2 className="text-lg font-semibold text-white mb-6">My Week at a Glance</h2>
         <div className="h-[400px] w-full min-w-0" style={{ position: 'relative' }}>
-          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+          <ResponsiveContainer width="99%" height="100%" minHeight={300}>
             <BarChart data={dailyData} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
               <XAxis dataKey="date" stroke="#94a3b8" />

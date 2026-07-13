@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import { ClipboardDocumentCheckIcon, PlusIcon, XMarkIcon, PencilSquareIcon, TrashIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { AuthContext } from '../../context/AuthContext';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const AssignTasks = () => {
   const { user } = useContext(AuthContext);
@@ -124,6 +126,8 @@ const AssignTasks = () => {
       toast.error('Failed to delete task');
     }
   };
+
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(tasks, 15);
 
   const handleQuickSelect = (type) => {
     setExportType(type);
@@ -327,9 +331,9 @@ const AssignTasks = () => {
                   <th className="px-6 py-4 font-medium text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700">
-                {tasks.map(t => (
-                  <tr key={t.id} className="hover:bg-slate-700/20 transition-colors">
+              <tbody className="divide-y divide-slate-700/50">
+                {currentData.map(t => (
+                  <tr key={t.id} className="hover:bg-slate-750/50 transition-colors">
                     <td className="px-6 py-4 font-medium text-slate-200">{t.title}</td>
                     <td className="px-6 py-4">{t.project_name || 'No Project'}</td>
                     <td className="px-6 py-4">{t.assigned_to_email || 'Unassigned'}</td>
@@ -355,6 +359,15 @@ const AssignTasks = () => {
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && tasks.length > 0 && (
+          <PaginationControls 
+            currentPage={currentPage}
+            totalPages={totalPages}
+            goToPage={goToPage}
+            nextPage={nextPage}
+            prevPage={prevPage}
+          />
         )}
       </div>
 

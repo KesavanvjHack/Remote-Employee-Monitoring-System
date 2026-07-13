@@ -1192,7 +1192,8 @@ class ReportService:
         # If today, some people might be missing attendance entirely
         # (They haven't logged in, and no dummy record created yet)
         if (not from_date or from_date <= today) and (not to_date or to_date >= today):
-            missing_today = max(0, actual_user_count - (total_records if total_records > 0 else 0))
+            today_records = qs.filter(date=today).count()
+            missing_today = max(0, actual_user_count - today_records)
             if is_before_cutoff:
                 calculating += missing_today
             else:
@@ -1240,24 +1241,29 @@ class ReportService:
         }
 
     @staticmethod
-    def get_daily_data(user_ids=None, days=7):
+    def get_daily_data(user_ids=None, days=7, from_date=None, to_date=None):
         """
         Return per-day productivity data for charts.
         user_ids: Optional list of user IDs to filter by.
         """
         from .models import Attendance, User
         from django.db.models import Sum
+        from datetime import timedelta, date
+        from django.utils import timezone
 
-        end = date.today()
-        start = end - timedelta(days=days - 1)
+        end_date = to_date if to_date else timezone.localdate()
+        if from_date:
+            start_date = from_date
+        else:
+            start_date = end_date - timedelta(days=days - 1)
 
-        qs = Attendance.objects.filter(date__range=(start, end))
+        qs = Attendance.objects.filter(date__range=(start_date, end_date))
         if user_ids is not None:
             qs = qs.filter(user_id__in=user_ids)
 
         result = []
-        d = start
-        while d <= end:
+        d = start_date
+        while d <= end_date:
             day_qs = qs.filter(date=d)
             work_s = day_qs.aggregate(s=Sum('total_work_seconds'))['s'] or 0
             idle_s = day_qs.aggregate(s=Sum('total_idle_seconds'))['s'] or 0

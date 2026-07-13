@@ -12,8 +12,7 @@ const ScreenSharer = () => {
   const socketRef = useRef(null);
   const peerConnections = useRef({}); // { managerId: RTCPeerConnection }
   
-  // Only employees share screens
-  if (!user || user.role !== 'employee') return null;
+  // Only employees share screens (early return moved below hooks)
 
   const startSharing = async () => {
     try {
@@ -176,6 +175,7 @@ const ScreenSharer = () => {
     };
   }, []);
 
+  if (!user || user.role !== 'employee') return null;
   if (!isSharing) return null;
 
   return (

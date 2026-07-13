@@ -1114,16 +1114,30 @@ class TeamTimesheetView(APIView):
             # Admins see all staff (Managers and Employees)
             team = User.objects.filter(is_active=True, role__in=['manager', 'employee']).select_related('department', 'manager', 'shift')
 
-        # 2. Get today's actual attendance records for these employees
         today = date.today()
-        # Optional: frontend could pass ?date=YYYY-MM-DD
-        date_str = request.query_params.get('date')
-        if date_str:
+        target_dates = [today]
+        
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        
+        from datetime import datetime, timedelta
+        
+        if start_date_str and end_date_str:
             try:
-                from datetime import datetime
-                today = datetime.strptime(date_str, '%Y-%m-%d').date()
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                if start_date <= end_date:
+                    target_dates = [start_date + timedelta(days=x) for x in range((end_date - start_date).days + 1)]
             except ValueError:
                 pass
+        else:
+            date_str = request.query_params.get('date')
+            if date_str:
+                try:
+                    today = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    target_dates = [today]
+                except ValueError:
+                    pass
 
         from django.db.models import Prefetch
         
@@ -1138,76 +1152,75 @@ class TeamTimesheetView(APIView):
 
         attendances = Attendance.objects.filter(
             user__in=team,
-            date=today
+            date__in=target_dates
         ).select_related('user', 'reviewed_by').prefetch_related(work_sessions_prefetch)
         
-        # Map user ID to their attendance record
-        att_map = {a.user_id: a for a in attendances}
-
         # Pre-fetch all active policies once to avoid N+1 queries in loop
         from .models import AttendancePolicy
         policies = list(AttendancePolicy.objects.filter(is_active=True))
         default_policy = next((p for p in policies if p.department_id is None), None)
 
-        # Batch status check if today
+        # Batch status check if today is in target_dates
         statuses = {}
-        if today == date.today():
-            statuses = StatusService.get_users_statuses(team, target_date=today)
+        if date.today() in target_dates:
+            statuses = StatusService.get_users_statuses(team, target_date=date.today())
 
         # Bulk serialize all attendance records at once (much faster than per-row)
         att_serialized = {}
         if attendances:
             for record_obj in attendances:
-                att_serialized[str(record_obj.user_id)] = AttendanceSerializer(record_obj).data
+                att_serialized[f"{record_obj.user_id}_{record_obj.date}"] = AttendanceSerializer(record_obj).data
 
         enriched = []
-        for member in team:
-            u_id_str = str(member.id)
-            record = att_serialized.get(u_id_str)
-            
-            if record:
-                record = dict(record)  # make mutable copy
-                record['user_name'] = member.full_name
-                record['user_email'] = member.email
-                if member.department:
-                    record['department_name'] = member.department.name
-            else:
-                # Generate a dummy 'absent' record
-                policy = next((p for p in policies if p.department_id == member.department_id), None) or default_policy
+        for target_date in sorted(target_dates, reverse=True):
+            for member in team:
+                u_id_str = str(member.id)
+                key = f"{u_id_str}_{target_date}"
+                record = att_serialized.get(key)
                 
-                target_seconds = float(policy.min_working_hours * 3600) if policy else 28800 # 8h fallback
+                if record:
+                    record = dict(record)  # make mutable copy
+                    record['user_name'] = member.full_name
+                    record['user_email'] = member.email
+                    if member.department:
+                        record['department_name'] = member.department.name
+                else:
+                    # Generate a dummy 'absent' record
+                    policy = next((p for p in policies if p.department_id == member.department_id), None) or default_policy
+                    
+                    target_seconds = float(policy.min_working_hours * 3600) if policy else 28800 # 8h fallback
 
-                record = {
-                    'id': f"dummy_{member.id}_{today}",
-                    'user': str(member.id),
-                    'user_name': member.full_name,
-                    'user_email': member.email,
-                    'user_role': member.role,
-                    'department_name': member.department.name if member.department else None,
-                    'date': str(today),
-                    'status': 'absent',
-                    'work_hours': '0.00',
-                    'total_work_seconds': 0,
-                    'total_break_seconds': 0,
-                    'total_idle_seconds': 0,
-                    'missing_seconds': target_seconds,
-                    'is_flagged': False,
-                    'flag_reason': '',
-                    'manager_remark': '',
-                    'reviewed_by': None,
-                    'reviewed_at': None,
-                    'first_login': None,
-                    'last_logout': None
-                }
+                    record = {
+                        'id': f"dummy_{member.id}_{target_date}",
+                        'user': u_id_str,
+                        'user_name': member.full_name,
+                        'user_email': member.email,
+                        'user_role': member.role,
+                        'department_name': member.department.name if member.department else None,
+                        'date': str(target_date),
+                        'status': 'absent',
+                        'work_hours': '0.00',
+                        'total_work_seconds': 0,
+                        'total_break_seconds': 0,
+                        'total_idle_seconds': 0,
+                        'missing_seconds': target_seconds,
+                        'is_flagged': False,
+                        'flag_reason': '',
+                        'manager_remark': '',
+                        'reviewed_by': None,
+                        'reviewed_at': None,
+                        'first_login': None,
+                        'last_logout': None
+                    }
 
-            # Annotate with live status (only makes sense for today)
-            if today == date.today():
-                status_data = statuses.get(member.id) or statuses.get(u_id_str) or {'status': 'offline'}
-                record['live_status'] = status_data['status']
-            else:
-                record['live_status'] = 'offline'
+                # Annotate with live status (only makes sense for today)
+                if target_date == date.today():
+                    status_data = statuses.get(member.id) or statuses.get(u_id_str) or {'status': 'offline'}
+                    record['live_status'] = status_data['status']
+                else:
+                    record['live_status'] = 'offline'
 
-            enriched.append(record)
+                enriched.append(record)
 
         return Response(enriched)
 
@@ -1633,8 +1646,8 @@ class ReportView(APIView):
         if report_type == 'summary':
             data = ReportService.get_attendance_summary(user_ids, from_date, to_date)
         elif report_type == 'daily':
-            # Update get_daily_data to also support user_ids list
-            data = ReportService.get_daily_data(user_ids, days)
+            # Pass from_date and to_date to get_daily_data
+            data = ReportService.get_daily_data(user_ids, days=7, from_date=from_date, to_date=to_date)
         elif report_type == 'team' and request.user.role in ('admin', 'manager'):
             user = request.user
             if user.role == 'manager':

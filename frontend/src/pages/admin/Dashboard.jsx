@@ -41,9 +41,10 @@ const AdminDashboard = () => {
 
   const fetchData = async () => {
     try {
+      setLoading(true);
       const [sumRes, dailyRes, leavesRes] = await Promise.all([
         api.get('/reports/?type=summary'),
-        api.get('/reports/?type=daily&days=7'),
+        api.get('/reports/?type=daily'),
         api.get('/attendance/todays_absences/')
       ]);
       setSummary(sumRes.data);
@@ -101,8 +102,10 @@ const AdminDashboard = () => {
   );
 
   return (
-    <div className="space-y-6 page-fade-in">
-      <h1 className="text-2xl font-bold tracking-tight text-white mb-6">Organization Overview</h1>
+    <div className="space-y-8 pb-10 page-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold tracking-tight text-white">Organization Overview</h1>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
         <StatCard 
@@ -141,7 +144,7 @@ const AdminDashboard = () => {
         <div className="lg:col-span-2 bg-slate-800/50 border border-slate-700 p-6 rounded-2xl">
           <h2 className="text-lg font-semibold text-white mb-6">7-Day Productivity Trend</h2>
           <div className="h-[320px] w-full min-w-0" style={{ position: 'relative' }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+            <ResponsiveContainer width="99%" height="100%" minHeight={300}>
               <BarChart data={dailyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
                 <XAxis dataKey="date" stroke="#94a3b8" />
@@ -162,7 +165,7 @@ const AdminDashboard = () => {
         <div className="bg-slate-800/50 border border-slate-700 p-6 rounded-2xl">
           <h2 className="text-lg font-semibold text-white mb-6">Attendance Distribution</h2>
           <div className="h-[320px] w-full min-w-0" style={{ position: 'relative' }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+            <ResponsiveContainer width="99%" height="100%" minHeight={300}>
               <PieChart>
                 <Pie
                   data={pieData}

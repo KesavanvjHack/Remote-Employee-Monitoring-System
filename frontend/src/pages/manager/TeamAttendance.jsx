@@ -35,10 +35,10 @@ const TeamAttendance = () => {
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const { policy, liveStatuses } = useContext(AuthContext);
 
-  // Date filter state for export
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [exportType, setExportType] = useState('custom');
+  // Date filter state for view and export
+  const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [dateFilter, setDateFilter] = useState('today');
   const [exportEmployee, setExportEmployee] = useState('all');
 
   const abortControllerRef = useRef(null);
@@ -52,7 +52,14 @@ const TeamAttendance = () => {
     abortControllerRef.current = new AbortController();
 
     try {
+      const params = {};
+      if (startDate && endDate) {
+        params.start_date = startDate;
+        params.end_date = endDate;
+      }
+
       const res = await api.get('/sessions/team-timesheet/', {
+        params,
         signal: abortControllerRef.current.signal
       });
       setAttendance(res.data.results || res.data);
@@ -67,7 +74,7 @@ const TeamAttendance = () => {
         setLoading(false);
       }
     }
-  }, []);
+  }, [startDate, endDate]);
 
 
   useEffect(() => {
@@ -88,7 +95,7 @@ const TeamAttendance = () => {
   }, [fetchTeamAttendance]);
 
   const handleQuickSelect = (type) => {
-    setExportType(type);
+    setDateFilter(type);
     const now = new Date();
     if (type === 'weekly') {
       setStartDate(format(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd'));
@@ -214,39 +221,42 @@ const TeamAttendance = () => {
               ))}
             </select>
 
-            <label htmlFor="exportType" className="sr-only">Select Export Time Range</label>
+            <label htmlFor="dateFilter" className="sr-only">Select Time Range</label>
             <select 
-              id="exportType"
-              name="export-type"
-              value={exportType}
+              id="dateFilter"
+              name="date-filter"
+              value={dateFilter}
               onChange={(e) => handleQuickSelect(e.target.value)}
               className="flex-1 md:flex-none bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="custom">Custom Dates</option>
+              <option value="today">Today</option>
               <option value="weekly">This Week</option>
               <option value="monthly">This Month</option>
+              <option value="custom">Custom Dates</option>
             </select>
           </div>
           
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <input 
-              type="date" 
-              id="exportStartDate"
-              name="export-start-date"
-              value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setExportType('custom'); }}
-              className="flex-1 md:flex-none bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
-            />
-            <span className="text-slate-500 text-xs">to</span>
-            <input 
-              type="date" 
-              id="exportEndDate"
-              name="export-end-date"
-              value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setExportType('custom'); }}
-              className="flex-1 md:flex-none bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
-            />
-          </div>
+          {dateFilter === 'custom' && (
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <input 
+                type="date" 
+                id="exportStartDate"
+                name="export-start-date"
+                value={startDate}
+                onChange={(e) => { setStartDate(e.target.value); setDateFilter('custom'); }}
+                className="flex-1 md:flex-none bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+              />
+              <span className="text-slate-500 text-xs">to</span>
+              <input 
+                type="date" 
+                id="exportEndDate"
+                name="export-end-date"
+                value={endDate}
+                onChange={(e) => { setEndDate(e.target.value); setDateFilter('custom'); }}
+                className="flex-1 md:flex-none bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+              />
+            </div>
+          )}
 
           <button 
             onClick={handleExport}

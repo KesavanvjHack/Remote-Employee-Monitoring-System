@@ -1,3 +1,7 @@
+/* eslint-disable react-refresh/only-export-components */
+/* eslint-disable react-hooks/purity */
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable react-hooks/preserve-manual-memoization */
 import { createContext, useState, useEffect, useRef, useCallback } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import api from '../api/axios';
@@ -48,7 +52,9 @@ export const AuthProvider = ({ children }) => {
         const cachedUser = JSON.parse(cachedUserStr);
         myIdLower = String(cachedUser.id || '').toLowerCase() || null;
       }
-    } catch (e) {}
+    } catch {
+      // Ignore cache parsing errors
+    }
 
     if (myIdLower) {
       const lockExpiry = wsLockMapRef.current.get(myIdLower) || 0;
@@ -169,6 +175,33 @@ export const AuthProvider = ({ children }) => {
           const recipientId = String(data.recipient_id || '').toLowerCase();
           
           if (recipientId === currentUserId) {
+            toast.custom((t) => (
+              <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-slate-800 shadow-lg rounded-lg pointer-events-auto flex ring-1 ring-black ring-opacity-5 border border-slate-700`}>
+                <div className="flex-1 w-0 p-4">
+                  <div className="flex items-start">
+                    <div className="flex-shrink-0 pt-0.5">
+                      <div className={`w-2 h-2 rounded-full ${
+                        data.notif_type === 'status' ? 'bg-emerald-400' : 
+                        data.notif_type === 'system' ? 'bg-rose-400' : 'bg-indigo-400'
+                      }`} />
+                    </div>
+                    <div className="ml-3 flex-1">
+                      <p className="text-sm font-medium text-slate-100">{data.title}</p>
+                      <p className="mt-1 text-sm text-slate-400 whitespace-pre-line">{data.message}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex border-l border-slate-700">
+                  <button 
+                    onClick={() => toast.dismiss(t.id)}
+                    className="w-full border border-transparent rounded-none rounded-r-lg p-4 flex items-center justify-center text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ), { duration: 8000, id: data.notification_id });
+
             setNotifications((prev) => {
               if (prev.some(n => n.id === data.notification_id)) return prev;
               const newNotif = {
@@ -181,33 +214,6 @@ export const AuthProvider = ({ children }) => {
                 created_at: new Date().toISOString()
               };
               
-              toast.custom((t) => (
-                <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-slate-800 shadow-lg rounded-lg pointer-events-auto flex ring-1 ring-black ring-opacity-5 border border-slate-700`}>
-                  <div className="flex-1 w-0 p-4">
-                    <div className="flex items-start">
-                      <div className="flex-shrink-0 pt-0.5">
-                        <div className={`w-2 h-2 rounded-full ${
-                          data.notif_type === 'status' ? 'bg-emerald-400' : 
-                          data.notif_type === 'system' ? 'bg-rose-400' : 'bg-indigo-400'
-                        }`} />
-                      </div>
-                      <div className="ml-3 flex-1">
-                        <p className="text-sm font-medium text-slate-100">{data.title}</p>
-                        <p className="mt-1 text-sm text-slate-400 whitespace-pre-line">{data.message}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex border-l border-slate-700">
-                    <button 
-                      onClick={() => toast.dismiss(t.id)}
-                      className="w-full border border-transparent rounded-none rounded-r-lg p-4 flex items-center justify-center text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-              ), { duration: 8000, id: data.notification_id });
-
               return [newNotif, ...prev];
             });
           }
@@ -316,6 +322,7 @@ export const AuthProvider = ({ children }) => {
         }
       }
     } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError') return;
       console.error('Failed to fetch idle threshold', err);
     }
 
@@ -505,7 +512,7 @@ export const AuthProvider = ({ children }) => {
 
   // GLOBAL AUTO-IDLE DETECTOR (FOR EMPLOYEES)
   useEffect(() => {
-    if (!user || user.role !== 'employee' || status === 'offline' || status === 'on_break') return;
+    if (!user || user.role === 'admin' || status === 'offline' || status === 'on_break') return;
 
     const watchIdle = () => {
         // DO NOT RUN IDLE DETECTION IF SCREEN IS MISSING (waiting for resume screen share)

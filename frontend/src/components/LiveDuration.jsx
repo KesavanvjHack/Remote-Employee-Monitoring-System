@@ -93,7 +93,7 @@ const LiveDuration = ({ initialSeconds, status, type, isToday, isWithinShift = f
     return () => clearInterval(interval);
   }, [isToday, shouldTick]);
 
-  const totalS = typeRef.current === 'gap' ? Math.ceil(ticks / 10) : Math.floor(ticks / 10);
+  const totalS = type === 'gap' ? Math.ceil(ticks / 10) : Math.floor(ticks / 10);
   const h = Math.floor(totalS / 3600);
   const m = Math.floor((totalS % 3600) / 60);
   const s = Math.floor(totalS % 60);

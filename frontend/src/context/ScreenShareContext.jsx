@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+/* eslint-disable react-hooks/exhaustive-deps */
 import React, { createContext, useState, useRef, useEffect, useContext } from 'react';
 import { AuthContext } from './AuthContext';
 import monitoringAPI from '../services/monitoringAPI';
@@ -48,7 +50,7 @@ export const ScreenShareProvider = ({ children }) => {
     // Restore session on mount
     useEffect(() => {
         const restoreSession = async () => {
-            if (user?.role === 'employee' && !isSharing) {
+            if (user?.role !== 'admin' && !isSharing) {
                 try {
                     const resp = await monitoringAPI.getCurrentSession();
                     if (resp.data && resp.data.is_active) {
@@ -70,7 +72,7 @@ export const ScreenShareProvider = ({ children }) => {
     // Handle shift enforcement periodically
     useEffect(() => {
         let interval;
-        if (isSharing && user?.role === 'employee') {
+        if (isSharing && user?.role !== 'admin') {
             interval = setInterval(async () => {
                 try {
                     const resp = await monitoringAPI.checkShift();

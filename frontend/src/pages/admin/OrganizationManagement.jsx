@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import api from '../../api/axios';
 import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const OrganizationManagement = () => {
   const [departments, setDepartments] = useState([]);
@@ -75,6 +77,8 @@ const OrganizationManagement = () => {
     }
   };
 
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(departments, 15);
+
   if (loading) return <div className="text-indigo-400 p-8 text-center animate-pulse">Loading Organization Data...</div>;
 
   return (
@@ -104,7 +108,7 @@ const OrganizationManagement = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
-              {departments.map((dept) => (
+              {currentData.map((dept) => (
                 <tr key={dept.id} className="hover:bg-slate-700/20 transition-colors">
                   <td className="px-6 py-4 font-medium text-slate-200">{dept.name}</td>
                   <td className="px-6 py-4">{dept.description || '-'}</td>
@@ -130,6 +134,15 @@ const OrganizationManagement = () => {
             </tbody>
           </table>
         </div>
+        {departments.length > 0 && (
+          <PaginationControls 
+            currentPage={currentPage}
+            totalPages={totalPages}
+            goToPage={goToPage}
+            nextPage={nextPage}
+            prevPage={prevPage}
+          />
+        )}
       </div>
 
       {/* Dept Modal */}

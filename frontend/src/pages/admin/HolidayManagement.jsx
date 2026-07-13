@@ -5,6 +5,8 @@ import { format, startOfWeek, startOfMonth, endOfWeek, endOfMonth } from 'date-f
 import { CalendarIcon, TrashIcon, ArrowDownTrayIcon, UsersIcon } from '@heroicons/react/24/outline';
 import { AuthContext } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const parseTime12hToMinutes = (time12h) => {
   if (!time12h) return 0;
@@ -37,6 +39,8 @@ const HolidayManagement = () => {
   const [exportFormat, setExportFormat] = useState('csv');
   const [users, setUsers] = useState([]);
   const [isExporting, setIsExporting] = useState(false);
+
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(holidays, 15);
 
   useEffect(() => {
     fetchHolidays();
@@ -451,7 +455,8 @@ const HolidayManagement = () => {
           </form>
         </div>
 
-        <ResponsiveTable title="Upcoming Holidays" className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-4">
+          <ResponsiveTable title="Upcoming Holidays">
           <table className="w-full text-left text-sm text-slate-300">
             <thead className="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
               <tr>
@@ -471,7 +476,7 @@ const HolidayManagement = () => {
               ) : holidays.length === 0 ? (
                 <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-500">No holidays configured</td></tr>
               ) : (
-                holidays.map((h) => (
+                currentData.map((h) => (
                   <tr key={h.id} className="hover:bg-slate-700/20 transition-colors">
                     <td className="px-6 py-4 font-medium text-slate-200 whitespace-nowrap">
                         {format(new Date(h.date), 'MMM dd, yyyy')}
@@ -498,6 +503,16 @@ const HolidayManagement = () => {
             </tbody>
           </table>
         </ResponsiveTable>
+        {holidays.length > 0 && (
+          <PaginationControls 
+            currentPage={currentPage}
+            totalPages={totalPages}
+            goToPage={goToPage}
+            nextPage={nextPage}
+            prevPage={prevPage}
+          />
+        )}
+        </div>
       </div>
     </div>
   );

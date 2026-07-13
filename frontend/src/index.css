@@ -112,15 +112,15 @@
   to { transform: scale(0.95); opacity: 0; }
 }
 
-/* Enable smooth scrolling globally on all scrollable containers and prevent scroll-chaining bounce */
-html, body {
-  overscroll-behavior-y: none;
+/* Enable smooth scrolling globally on all scrollable containers */
+html {
+  scroll-behavior: smooth;
 }
 
 main, .overflow-y-auto, .overflow-auto {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
   scroll-anchoring: auto;
+  will-change: scroll-position;
 }
 
 /* Custom scrollbar for dark theme */

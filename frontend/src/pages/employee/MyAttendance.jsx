@@ -6,6 +6,8 @@ import toast from 'react-hot-toast';
 import { formatDecimalHours } from '../../utils/format';
 import LiveDuration from '../../components/LiveDuration';
 import { AuthContext } from '../../context/AuthContext';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const parseTime12hToMinutes = (time12h) => {
   if (!time12h) return 0;
@@ -34,10 +36,10 @@ const MyAttendance = () => {
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const { policy, status: globalStatus } = useContext(AuthContext);
   
-  // Date filter state for export
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [exportType, setExportType] = useState('custom');
+  // Date filter state for view and export
+  const [startDate, setStartDate] = useState(format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'));
+  const [dateFilter, setDateFilter] = useState('weekly');
 
   useEffect(() => {
     fetchAttendance();
@@ -69,7 +71,12 @@ const MyAttendance = () => {
   const fetchAttendance = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const res = await api.get('/attendance/');
+      const params = {};
+      if (startDate && endDate) {
+        params.date__gte = startDate;
+        params.date__lte = endDate;
+      }
+      const res = await api.get('/attendance/', { params });
       setAttendance(res.data.results || res.data);
       setLastUpdated(new Date());
     } catch (error) {
@@ -79,8 +86,13 @@ const MyAttendance = () => {
     }
   };
 
+  // Ensure fetchAttendance is called when startDate/endDate change
+  useEffect(() => {
+    fetchAttendance();
+  }, [startDate, endDate]);
+
   const handleQuickSelect = (type) => {
-    setExportType(type);
+    setDateFilter(type);
     const now = new Date();
     if (type === 'weekly') {
       setStartDate(format(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd'));
@@ -158,34 +170,17 @@ const MyAttendance = () => {
     toast.success('Export downloaded successfully!');
   };
 
-  // Loading skeletons for a premium feel
-  if (loading) {
-    return (
-      <div className="space-y-6 page-fade-in">
-        <div className="flex justify-between items-center mb-6">
-          <div className="h-8 w-64 bg-slate-700 rounded skeleton-pulse"></div>
-          <div className="h-10 w-48 bg-slate-700 rounded skeleton-pulse"></div>
-        </div>
-        <div className="bg-slate-800/50 border border-slate-700 rounded-2xl overflow-hidden">
-          <div className="p-4 bg-slate-900/50 h-10 skeleton-pulse"></div>
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="p-6 border-b border-slate-700/50 h-16 skeleton-pulse"></div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // Filter attendance for display: Only show CURRENT WEEK records with placeholders
+  // Filter attendance for display: Show records for selected date range
   const now = new Date();
-  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
-  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
   
-  const allWeekDays = eachDayOfInterval({ start: weekStart, end: weekEnd });
+  let rangeStart = startDate ? new Date(startDate) : startOfWeek(now, { weekStartsOn: 1 });
+  let rangeEnd = endDate ? new Date(endDate) : endOfWeek(now, { weekStartsOn: 1 });
+  
+  const allRangeDays = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
   // Filter to only show dates up to TODAY
-  const filteredWeekDays = allWeekDays.filter(day => day <= now);
+  const filteredRangeDays = allRangeDays.filter(day => day <= now);
   
-  const weeklyAttendance = filteredWeekDays.map(day => {
+  const displayedAttendance = filteredRangeDays.map(day => {
     const existing = attendance.find(r => isSameDay(new Date(r.date), day));
     if (existing) return existing;
 
@@ -212,6 +207,35 @@ const MyAttendance = () => {
     };
   });
 
+  const sortedAttendance = displayedAttendance.sort((a, b) => new Date(b.date) - new Date(a.date));
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(sortedAttendance, 15);
+
+  // Loading skeletons for a premium feel
+  if (loading) {
+    return (
+      <div className="space-y-6 page-fade-in">
+        <div className="flex justify-between items-center mb-6">
+          <div className="h-8 w-64 bg-slate-700 rounded skeleton-pulse"></div>
+          <div className="h-10 w-48 bg-slate-700 rounded skeleton-pulse"></div>
+        </div>
+        <div className="bg-slate-800/50 border border-slate-700 rounded-2xl overflow-hidden">
+          <div className="p-4 bg-slate-900/50 h-10 skeleton-pulse"></div>
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="p-6 border-b border-slate-700/50 h-16 skeleton-pulse"></div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+
+  const getTitle = () => {
+    if (dateFilter === 'today') return "Today's Attendance";
+    if (dateFilter === 'weekly') return "This Week's Attendance";
+    if (dateFilter === 'monthly') return "This Month's Attendance";
+    return "Attendance Records";
+  };
+
   return (
     <div className="space-y-6 page-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -219,7 +243,7 @@ const MyAttendance = () => {
           <div className="p-2 bg-indigo-500/20 rounded-lg">
             <QueueListIcon className="h-6 w-6 text-indigo-400" />
           </div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">This Week's Attendance</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">{getTitle()}</h1>
           {lastUpdated && (
             <span className="text-[10px] text-slate-500 font-mono mt-1 block">
               Last synced: {lastUpdated.toLocaleTimeString()}
@@ -243,37 +267,40 @@ const MyAttendance = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-slate-800/50 p-3 rounded-xl border border-slate-700/50">
           <div className="flex gap-2">
             <select 
-              id="exportType"
-              name="export-type"
-              value={exportType}
+              id="dateFilter"
+              name="date-filter"
+              value={dateFilter}
               onChange={(e) => handleQuickSelect(e.target.value)}
               className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="custom">Custom Dates</option>
+              <option value="today">Today</option>
               <option value="weekly">This Week</option>
               <option value="monthly">This Month</option>
+              <option value="custom">Custom Dates</option>
             </select>
           </div>
           
-          <div className="flex items-center gap-2">
-            <input 
-              type="date" 
-              id="exportStartDate"
-              name="export-start-date"
-              value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setExportType('custom'); }}
-              className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
-            />
-            <span className="text-slate-500">to</span>
-            <input 
-              type="date" 
-              id="exportEndDate"
-              name="export-end-date"
-              value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setExportType('custom'); }}
-              className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
-            />
-          </div>
+          {dateFilter === 'custom' && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <input 
+                type="date" 
+                id="exportStartDate"
+                name="export-start-date"
+                value={startDate}
+                onChange={(e) => { setStartDate(e.target.value); setDateFilter('custom'); }}
+                className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+              />
+              <span className="text-slate-500">to</span>
+              <input 
+                type="date" 
+                id="exportEndDate"
+                name="export-end-date"
+                value={endDate}
+                onChange={(e) => { setEndDate(e.target.value); setDateFilter('custom'); }}
+                className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+              />
+            </div>
+          )}
 
           <button
             onClick={handleExport}
@@ -300,8 +327,8 @@ const MyAttendance = () => {
                 <th className="px-4 py-3 font-semibold tracking-wider">Remarks</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/50">
-              {weeklyAttendance.map((record) => {
+            <tbody className="divide-y divide-slate-700/50 text-sm">
+              {currentData.map((record) => {
                 const todayStr = new Date().toISOString().split('T')[0];
                 const now = new Date();
                 const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
@@ -418,7 +445,7 @@ const MyAttendance = () => {
                   </td>
                 </tr>
               )})}
-              {weeklyAttendance.length === 0 && (
+              {currentData.length === 0 && (
                 <tr>
                   <td colSpan="7" className="px-6 py-8 text-center text-slate-500 font-medium italic">No attendance records found for this period.</td>
                 </tr>
@@ -426,6 +453,13 @@ const MyAttendance = () => {
             </tbody>
           </table>
         </div>
+        <PaginationControls 
+          currentPage={currentPage}
+          totalPages={totalPages}
+          goToPage={goToPage}
+          nextPage={nextPage}
+          prevPage={prevPage}
+        />
       </div>
     </div>
   );

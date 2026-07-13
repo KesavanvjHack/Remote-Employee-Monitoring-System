@@ -245,8 +245,8 @@ const WorkSession = () => {
     try {
       setLoading(true);
 
-      if (action === 'start') {
-          // Trigger WebRTC screen share first
+      if (action === 'start' && user.role === 'employee') {
+          // Trigger WebRTC screen share first for employees
           await startSharing();
       }
 
@@ -271,7 +271,9 @@ const WorkSession = () => {
           
           if (endpoint === 'work' && action === 'stop') {
              localStorage.removeItem('rems_active_break');
-             await stopWebRTC();
+             if (user.role === 'employee') {
+                 await stopWebRTC();
+             }
           }
           toast.success(`Session ${action === 'start' ? 'started' : 'ended'} successfully`);
       }
@@ -441,34 +443,37 @@ const WorkSession = () => {
 
           {(status === 'working' || status === 'idle') && (
             <>
-              {/* Stream Disconnection Warning (occurs on refresh or error) */}
-              {!stream && (
-                <div className="sm:col-span-2 p-6 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex flex-col items-center gap-4 animate-pulse">
-                  <div className="flex items-center gap-3 text-rose-400">
-                    <CameraIcon className="h-6 w-6" />
-                    <span className="font-bold">Screen sharing required</span>
-                  </div>
-                  <p className="text-sm text-slate-400 text-center">
-                    You are currently in a {status} session, but screen sharing is not active. 
-                    Please share your entire screen to continue working.
-                  </p>
-                  <button
-                    onClick={startSharing}
-                    className="w-full flex items-center justify-center gap-3 bg-rose-600 hover:bg-rose-500 text-white py-3 px-6 rounded-xl font-bold transition-all shadow-lg"
-                  >
-                    <PlayIcon className="h-5 w-5" />
-                    {isSharing ? 'Resume Screen Sharing' : 'Start Screen Sharing'}
-                  </button>
-                </div>
+              {/* Manual Resume for Non-Admins (who need screen sharing) */}
+              {!stream && user?.role !== 'admin' && status === 'idle' && (
+                <button
+                  onClick={startSharing}
+                  disabled={loading}
+                  className="w-full flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all animate-pulse disabled:animate-none disabled:opacity-50"
+                >
+                  <PlayIcon className="h-6 w-6" />
+                  {isSharing ? 'Resume Screen Sharing' : 'Start Screen Sharing'}
+                </button>
               )}
 
-              {(status === 'working' || status === 'idle') && stream && (
+              {/* Manual Resume for Admins (who don't use screen sharing or auto-idle) */}
+              {status === 'idle' && user?.role === 'admin' && (
+                <button
+                  onClick={() => handleAction('idle', 'stop')}
+                  disabled={loading}
+                  className="w-full flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all disabled:opacity-50"
+                >
+                  <PlayIcon className="h-6 w-6" />
+                  Resume Work
+                </button>
+              )}
+
+              {(status === 'working' || status === 'idle') && (
                 <div className="flex flex-col gap-3">
                   <select 
                     value={breakType}
                     onChange={(e) => setBreakType(e.target.value)}
-                    disabled={loading || (user?.role !== 'admin' && isOutsideShift)}
-                    className="w-full bg-slate-900/80 border border-slate-700 rounded-2xl px-4 py-3 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 uppercase tracking-widest text-sm font-semibold disabled:opacity-50"
+                    disabled={loading || status !== 'working' || (user?.role !== 'admin' && isOutsideShift)}
+                    className="w-full bg-slate-900/80 border border-slate-700 rounded-2xl px-4 py-3 text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 uppercase tracking-widest text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <option value="lunch">Lunch Break (60m)</option>
                     <option value="tea">Tea Break (15m)</option>
@@ -476,8 +481,8 @@ const WorkSession = () => {
                   </select>
                   <button
                     onClick={handleBreakStart}
-                    disabled={loading || (user?.role !== 'admin' && isOutsideShift)}
-                    className="flex items-center justify-center gap-3 bg-cyan-600 hover:bg-cyan-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all disabled:opacity-50"
+                    disabled={loading || status !== 'working' || (user?.role !== 'admin' && isOutsideShift)}
+                    className="flex items-center justify-center gap-3 bg-cyan-600 hover:bg-cyan-500 text-white py-4 px-6 rounded-2xl font-semibold tracking-wide shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
                   >
                     <PauseIcon className="h-6 w-6" />
                     Start Break

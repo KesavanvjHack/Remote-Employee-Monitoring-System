@@ -3,6 +3,8 @@ import api from '../../api/axios';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 import { CalendarDaysIcon, CheckIcon, XMarkIcon, TrashIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const LeaveApproval = () => {
   const [leaves, setLeaves] = useState([]);
@@ -124,6 +126,8 @@ const LeaveApproval = () => {
   };
 
   // Loading skeletons for a premium feel
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(leaves, 15);
+
   if (loading) {
     return (
       <div className="space-y-6 page-fade-in">
@@ -230,7 +234,7 @@ const LeaveApproval = () => {
 
       <div className="bg-slate-800/50 border border-slate-700 rounded-2xl overflow-hidden">
         <div className="p-6 border-b border-slate-700">
-          <h2 className="text-lg font-semibold text-white">This Week's Leave Requests</h2>
+          <h2 className="text-lg font-semibold text-white">Leave Requests</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-slate-300">
@@ -245,7 +249,7 @@ const LeaveApproval = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
-              {weeklyLeaves.map((leave) => (
+              {currentData.map((leave) => (
                 <tr key={leave.id} className="hover:bg-slate-700/20 transition-colors">
                   <td className="px-6 py-4 font-medium text-slate-200">{leave.employee_name}</td>
                   <td className="px-6 py-4 text-xs font-medium uppercase tracking-widest text-indigo-300">{leave.leave_type}</td>
@@ -295,14 +299,21 @@ const LeaveApproval = () => {
                   </td>
                 </tr>
               ))}
-              {weeklyLeaves.length === 0 && (
+              {leaves.length === 0 && (
                 <tr>
-                  <td colSpan="6" className="px-6 py-8 text-center text-slate-500">No leave requests found for this week</td>
+                  <td colSpan="6" className="px-6 py-8 text-center text-slate-500">No leave requests found</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        <PaginationControls 
+          currentPage={currentPage}
+          totalPages={totalPages}
+          goToPage={goToPage}
+          nextPage={nextPage}
+          prevPage={prevPage}
+        />
       </div>
     </div>
   );

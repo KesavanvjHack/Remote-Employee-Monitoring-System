@@ -4,11 +4,15 @@ import ResponsiveTable from '../../components/ResponsiveTable';
 import { format, startOfWeek, startOfMonth, endOfWeek, endOfMonth } from 'date-fns';
 import { ClipboardDocumentListIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import usePagination from '../../hooks/usePagination';
+import PaginationControls from '../../components/PaginationControls';
 
 const AuditLogs = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('today');
+  const [dateFilter, setDateFilter] = useState('today');
+  const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
 
   // Export State
   const [exportCategory, setExportCategory] = useState('all');
@@ -102,7 +106,29 @@ const AuditLogs = () => {
   };
 
 
+  const handleQuickSelect = (type) => {
+    setDateFilter(type);
+    const now = new Date();
+    if (type === 'today') {
+      setStartDate(format(now, 'yyyy-MM-dd'));
+      setEndDate(format(now, 'yyyy-MM-dd'));
+    } else if (type === 'weekly') {
+      setStartDate(format(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd'));
+      setEndDate(format(endOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd'));
+    } else if (type === 'monthly') {
+      setStartDate(format(startOfMonth(now), 'yyyy-MM-dd'));
+      setEndDate(format(endOfMonth(now), 'yyyy-MM-dd'));
+    }
+  };
+
   // Loading skeletons for a premium feel
+  const filteredLogs = logs.filter(log => {
+    const logDate = new Date(log.timestamp).toLocaleDateString('en-CA');
+    return logDate >= startDate && logDate <= endDate;
+  });
+
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(filteredLogs, 30);
+
   if (loading) {
     return (
       <div className="space-y-6 page-fade-in">
@@ -121,14 +147,7 @@ const AuditLogs = () => {
     );
   }
 
-  const filteredLogs = logs.filter(log => {
-    if (filter === 'all') return true;
-    const logDate = new Date(log.timestamp);
-    const today = new Date();
-    return logDate.getDate() === today.getDate() &&
-           logDate.getMonth() === today.getMonth() &&
-           logDate.getFullYear() === today.getFullYear();
-  });
+
 
   return (
     <div className="space-y-6 pb-10 page-fade-in">
@@ -140,23 +159,34 @@ const AuditLogs = () => {
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">System Audit Trails</h1>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-900/50 p-1 rounded-lg border border-slate-700 w-fit">
-          <button
-            onClick={() => setFilter('today')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              filter === 'today' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
+        <div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded-xl border border-slate-700 w-fit">
+          <select 
+            value={dateFilter}
+            onChange={(e) => handleQuickSelect(e.target.value)}
+            className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
           >
-            Today's Logs
-          </button>
-          <button
-            onClick={() => setFilter('all')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              filter === 'all' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            All Logs
-          </button>
+            <option value="today">Today</option>
+            <option value="weekly">This Week</option>
+            <option value="monthly">This Month</option>
+            <option value="custom">Custom Dates</option>
+          </select>
+          {dateFilter === 'custom' && (
+            <div className="flex items-center gap-2">
+              <input 
+                type="date" 
+                value={startDate}
+                onChange={(e) => { setStartDate(e.target.value); setDateFilter('custom'); }}
+                className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+              />
+              <span className="text-slate-500">to</span>
+              <input 
+                type="date" 
+                value={endDate}
+                onChange={(e) => { setEndDate(e.target.value); setDateFilter('custom'); }}
+                className="bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-indigo-500 [color-scheme:dark]"
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -283,7 +313,7 @@ const AuditLogs = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/50">
-            {filteredLogs.map((log) => (
+            {currentData.map((log) => (
               <tr key={log.id} className="hover:bg-slate-700/20 transition-colors">
                 <td className="px-6 py-4 whitespace-nowrap text-slate-400 font-mono text-xs">
                   {format(new Date(log.timestamp), 'yyyy-MM-dd HH:mm:ss')}
@@ -314,6 +344,15 @@ const AuditLogs = () => {
           </tbody>
         </table>
       </ResponsiveTable>
+      {filteredLogs.length > 0 && (
+        <PaginationControls 
+          currentPage={currentPage}
+          totalPages={totalPages}
+          goToPage={goToPage}
+          nextPage={nextPage}
+          prevPage={prevPage}
+        />
+      )}
     </div>
   );
 };
