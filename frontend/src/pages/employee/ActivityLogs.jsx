@@ -157,7 +157,7 @@ const ActivityLogs = () => {
             </table>
           </div>
         ) : displayedLogs.length === 0 ? (
-          <div className="p-8 text-center text-slate-400 italic">No activity logs recorded {filter === 'today' ? 'today' : 'yet'}.</div>
+          <div className="p-8 text-center text-slate-400 italic">No activity logs recorded {dateFilter === 'today' ? 'today' : 'yet'}.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-400">

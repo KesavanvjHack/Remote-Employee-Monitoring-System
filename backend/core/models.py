@@ -204,6 +204,13 @@ class AttendancePolicy(models.Model):
             shift_obj.start_time = self.shift_start_time
             shift_obj.end_time = self.shift_end_time
             shift_obj.save()
+
+        # Invalidate performance caches
+        from django.core.cache import cache
+        cache.delete('policy_global')
+        if self.department_id:
+            cache.delete(f'policy_dept_{self.department_id}')
+
         # Broadcast policy update to all clients
         from .services import StatusService
         StatusService.broadcast_policy_update()
@@ -320,6 +327,9 @@ class BreakSession(models.Model):
 
     class Meta:
         db_table = 'break_sessions'
+        indexes = [
+            models.Index(fields=['work_session', 'start_time']),
+        ]
 
     def __str__(self):
         return f'Break @ {self.start_time}'
@@ -343,6 +353,9 @@ class IdleLog(models.Model):
 
     class Meta:
         db_table = 'idle_logs'
+        indexes = [
+            models.Index(fields=['work_session', 'start_time']),
+        ]
 
     def __str__(self):
         return f'Idle @ {self.start_time}'

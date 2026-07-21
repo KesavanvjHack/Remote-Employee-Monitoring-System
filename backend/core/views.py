@@ -90,14 +90,22 @@ class RequestOTPView(APIView):
             
             text_message = f"Your REMS Verification Code is: {otp_code}\n\nThis code will expire in 10 minutes."
             
-            send_mail(
-                subject,
-                text_message,
-                from_email,
-                [email],
-                fail_silently=False,
-                html_message=html_message
-            )
+            import threading
+            def send_otp_email_thread(sub, txt, frm, to, html):
+                try:
+                    send_mail(sub, txt, frm, to, fail_silently=False, html_message=html)
+                except Exception as mail_err:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to send login OTP email to {to[0]}: {mail_err}")
+                    print(f"\n[ALERT] Real-time SMTP dispatch failed: {mail_err}")
+                    print(f"OTP code printed to console fallback: {otp_code}\n")
+
+            threading.Thread(
+                target=send_otp_email_thread, 
+                args=(subject, text_message, from_email, [email], html_message),
+                daemon=True
+            ).start()
         except Exception as mail_err:
             import logging
             logger = logging.getLogger(__name__)
@@ -264,14 +272,16 @@ class LogoutView(APIView):
                 token = RefreshToken(refresh_token)
                 token.blacklist()
             
-            # 1. Clear presence cache for instant offline status
-            cache.delete(f'presence_{user.id}')
-            
-            # 2. Broadcast status change immediately
-            StatusService.broadcast_status_change(user)
-            
-            # 3. Stop any active work/idle sessions upon logout for accurate time tracking
+            # 1. Stop any active work/idle sessions upon logout for accurate time tracking
+            from .services import WorkSessionService, StatusService, NotificationService
             WorkSessionService.stop_session(user)
+
+            # 2. Clear ALL presence caches for instant offline status
+            cache.delete(f'presence_{user.id}')
+            cache.delete(f'presence_channels_{user.id}')
+            
+            # 3. Broadcast status change immediately as logout
+            StatusService.broadcast_status_change(user, is_logout=True)
             
             # 4. Notify managers/admins of employee logout
             NotificationService.notify_based_on_role(user, "User Logout", f"{user.full_name} has logged out.", "system")
@@ -945,17 +955,17 @@ class IdleView(APIView):
         if action_type == 'start':
             start_time = request.data.get('start_time')
             reason = request.data.get('reason')
-            idle_log, created = IdleService.start_idle(request.user, start_time, reason)
+            idle_log, msg_or_created = IdleService.start_idle(request.user, start_time, reason)
             if idle_log is None:
-                return Response({'detail': 'No active work session.'}, status=400)
+                return Response({'detail': msg_or_created}, status=400)
             return Response({
-                'status': 'idle_started' if created else 'already_idle',
+                'status': 'idle_started' if msg_or_created else 'already_idle',
                 'idle_log': IdleLogSerializer(idle_log).data,
             })
         elif action_type == 'stop':
-            idle_log, stopped = IdleService.stop_idle(request.user)
-            if not stopped:
-                return Response({'detail': 'No active idle period.'}, status=400)
+            idle_log, msg_or_stopped = IdleService.stop_idle(request.user)
+            if idle_log is None:
+                return Response({'detail': msg_or_stopped}, status=400)
             return Response({
                 'status': 'resumed',
                 'idle_log': IdleLogSerializer(idle_log).data,
@@ -1018,6 +1028,7 @@ class RealTimeStatusView(APIView):
                 'user_name': target_user.full_name,
                 'attendance': attendance_data,
                 'session': session_data,
+                'idle_start': result.get('idle_start'),
             })
         except Exception as e:
             import logging
@@ -1086,6 +1097,7 @@ class TeamStatusView(APIView):
                 'role': member.role,
                 'department': member.department.name if member.department else None,
                 'status': status_data['status'],
+                'idle_start': status_data.get('idle_start'),
                 'is_within_shift': is_within_shift,
                 'shift_name': member.shift.name if member.shift else None,
                 'user_role': member.role,
@@ -1472,6 +1484,8 @@ class AttendancePolicyViewSet(viewsets.ModelViewSet):
             full_msg,
             "system"
         )
+        
+        StatusService.broadcast_policy_update()
 
         # Trigger background recalculation for recent attendance records to reflect new policy
         try:
@@ -2301,6 +2315,15 @@ class NotificationViewSet(viewsets.ModelViewSet):
         notification.is_read = True
         notification.save()
         return Response({'status': 'Notification marked as read'})
+
+    @action(detail=False, methods=['post'])
+    def bulk_delete(self, request):
+        notification_ids = request.data.get('ids', [])
+        if not notification_ids:
+            return Response({'detail': 'No IDs provided.'}, status=400)
+        # Only delete notifications belonging to the user
+        deleted, _ = self.get_queryset().filter(id__in=notification_ids).delete()
+        return Response({'status': 'success', 'deleted_count': deleted})
 
 
 class ScreenCaptureViewSet(viewsets.ModelViewSet):

@@ -30,6 +30,10 @@ export const AuthProvider = ({ children }) => {
   // Prevents stale HTTP polls from overwriting fresh WS/action status for 12s
   const wsLockMapRef = useRef(new Map());
   const lastActivityRef = useRef(Date.now());
+  // Ref to hold current status value for use inside event listeners (avoids stale closure)
+  const statusRef = useRef('offline');
+  // Grace period after idle starts — ignore mouse events for 5s to let DOM settle
+  const idleGracePeriodRef = useRef(0); // timestamp until which mouse events are ignored
   const [showWarning, setShowWarning] = useState(false);
   const [warningTimeLeft, setWarningTimeLeft] = useState('');
   const [isWithinShift, setIsWithinShift] = useState(true);
@@ -77,7 +81,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
   // Real-time Idle Logic: Derived from the Attendance Policy (minutes -> seconds)
   const getIdleThreshold = useCallback(() => {
-    return (policy?.idle_threshold_minutes || 15) * 60;
+    return (policy?.idle_threshold_minutes ?? 15) * 60;
   }, [policy]);
 
   const disconnectWebSocket = useCallback(() => {
@@ -147,10 +151,10 @@ export const AuthProvider = ({ children }) => {
 
           // Single authoritative write to liveStatuses (no-op if status unchanged)
           setLiveStatuses(prev => {
-            if (prev[userIdLower]?.status === data.status && prev[userIdLower]?.source === 'ws') return prev;
+            if (prev[userIdLower]?.status === data.status && prev[userIdLower]?.source === 'ws' && prev[userIdLower]?.idle_start === data.idle_start) return prev;
             return {
               ...prev,
-              [userIdLower]: { status: data.status, source: 'ws', timestamp: Date.now() }
+              [userIdLower]: { status: data.status, source: 'ws', timestamp: Date.now(), idle_start: data.idle_start }
             };
           });
 
@@ -163,13 +167,20 @@ export const AuthProvider = ({ children }) => {
           }
         } else if (data.type === 'policy_update') {
           console.log('Policy update received - triggering global sync');
-          // Re-fetch everything to reflect new shift hours or session resets
-          fetchInitialStatuses(currentUser.role);
           
-          // Emit a custom event so specific pages (like WorkSession) can re-fetch their local status
-          window.dispatchEvent(new CustomEvent('rems_sync_required'));
-          
-          toast.success('System policy updated', { icon: '🔄' });
+          // Fetch latest /auth/me/ to get updated shift times and idle thresholds
+          api.get('/auth/me/').then(res => {
+              localStorage.setItem('rems_user_cache', JSON.stringify(res.data));
+              // Re-fetch everything to reflect new shift hours or session resets
+              fetchInitialStatuses(currentUser.role);
+              
+              // Emit a custom event so specific pages (like WorkSession) can re-fetch their local status
+              window.dispatchEvent(new CustomEvent('rems_sync_required'));
+              
+              toast.success('System policy updated', { icon: '🔄' });
+          }).catch(err => {
+              fetchInitialStatuses(currentUser.role);
+          });
         } else if (data.type === 'notification_alert') {
           const currentUserId = String(currentUser?.id || '').toLowerCase();
           const recipientId = String(data.recipient_id || '').toLowerCase();
@@ -268,7 +279,7 @@ export const AuthProvider = ({ children }) => {
             // Per-user WS/action lock: skip HTTP if a fresh WS/action update arrived within 12s
             const lockExpiry = wsLockMapRef.current.get(memberIdLower) || 0;
             if (Date.now() >= lockExpiry) {
-              next[memberIdLower] = { status: member.status, source: 'http', timestamp: Date.now() };
+              next[memberIdLower] = { status: member.status, source: 'http', timestamp: Date.now(), idle_start: member.idle_start };
             }
             // else: lock is active — keep the WS/action status, discard stale HTTP
           });
@@ -289,7 +300,7 @@ export const AuthProvider = ({ children }) => {
             // No active WS/action lock — safe to seed from HTTP
             setLiveStatuses(prev => ({
               ...prev,
-              [myIdLower]: { status: res.data.status, source: 'http', timestamp: Date.now() }
+              [myIdLower]: { status: res.data.status, source: 'http', timestamp: Date.now(), idle_start: res.data.idle_start }
             }));
           }
         }
@@ -302,7 +313,12 @@ export const AuthProvider = ({ children }) => {
     try {
       const policyRes = await api.get('/policy/', { signal });
       const policies = policyRes.data.results || policyRes.data;
-      const activePolicy = policies.find(p => p.is_active) || policies[0];
+      // Sort by updated_at descending (most recently updated first)
+      // to match backend get_user_policy ordering
+      const sorted = [...policies].sort((a, b) => 
+        new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
+      );
+      const activePolicy = sorted.find(p => p.is_active) || sorted[0];
       if (activePolicy) {
         // Resolve policy details from user if available, otherwise fallback to global active policy
         const cachedUserStr = localStorage.getItem('rems_user_cache');
@@ -391,77 +407,45 @@ export const AuthProvider = ({ children }) => {
     }
   }, [fetchInitialStatuses, connectWebSocket]);
 
-  const refreshActivity = useCallback(() => {
+  // Ref-based activity recorder: NEVER changes, so event listeners are added once and never recreated.
+  const refreshActivityRef = useRef((e) => {
+    if (e && e.type === 'mousemove') {
+        if (e.movementX === undefined) return;
+        // Ignore micro-jitter (< 5px) from hardware — real movement is clearly felt
+        if (Math.abs(e.movementX) < 5 && Math.abs(e.movementY) < 5) return;
+    }
+    // During 5s grace period after idle starts, ignore mousemove (DOM layout reflows)
+    if (e && e.type === 'mousemove' && Date.now() < idleGracePeriodRef.current) return;
     lastActivityRef.current = Date.now();
-    if (showWarning) setShowWarning(false);
-  }, [showWarning]);
+  });
 
-  // HANDLE GLOBAL STATUS TOGGLING (SILENT)
-  const isTogglingIdleRef = useRef(false);
-  const handleIdleDetection = useCallback(async (action) => {
-    // Only proceed if not already in target state or already toggling
-    if (isTogglingIdleRef.current) return;
-    if (action === 'start' && status !== 'working') return;
-    if (action === 'stop' && status !== 'idle') return;
-
-    // GUARD: Prevent resuming to 'Working' if screen sharing is missing (set by WorkSession.jsx)
-    if (action === 'stop' && window.rems_screen_missing) {
-        console.log('[GlobalTracking] Resume blocked: Screen share required');
-        return;
-    }
-
-    try {
-      isTogglingIdleRef.current = true;
-      const thresholdSeconds = getIdleThreshold();
-      const nextStatus = action === 'start' ? 'idle' : 'working';
-      
-      setStatus(nextStatus);
-      window.dispatchEvent(new CustomEvent('statusChange', { detail: nextStatus }));
-
-      const payload = { action };
-      if (action === 'start') {
-          // Retroactively set start to (now - threshold)
-          const start = new Date(Date.now() - (thresholdSeconds * 1000));
-          payload.start_time = start.toISOString();
-      }
-
-      await api.post('/sessions/idle/', payload);
-      
-      // Don't re-fetch team statuses after idle stop — liveStatuses is already locked
-      // and the 5s background poll will catch up safely
-      // if (action === 'stop') fetchInitialStatuses(user.role);
-    } catch (err) {
-      console.error('[GlobalTracking] Idle toggle failed', err);
-      // Revert status on failure if it was a manual-like toggle
-      // setStatus(action === 'start' ? 'working' : 'idle'); 
-    } finally {
-      isTogglingIdleRef.current = false;
-    }
-  }, [status, fetchInitialStatuses, user, getIdleThreshold]);
+  // Always-current threshold in ms — updated when policy loads, read inside the tick closure
+  const idleThresholdMsRef = useRef(15 * 60 * 1000);
 
   useEffect(() => {
     checkUserStatus();
 
-    // GLOBAL ACTIVITY LISTENERS
-    window.addEventListener('mousemove', refreshActivity);
-    window.addEventListener('keydown', refreshActivity);
-    window.addEventListener('mousedown', refreshActivity);
-    window.addEventListener('scroll', refreshActivity);
+    // GLOBAL ACTIVITY LISTENERS — registered ONCE, never removed/re-added
+    // Uses refreshActivityRef.current so the function reference never changes
+    const handler = (e) => refreshActivityRef.current(e);
+    window.addEventListener('mousemove', handler, { passive: true });
+    window.addEventListener('keydown', handler, { passive: true });
+    window.addEventListener('mousedown', handler, { passive: true });
 
     return () => {
         disconnectWebSocket();
-        window.removeEventListener('mousemove', refreshActivity);
-        window.removeEventListener('keydown', refreshActivity);
-        window.removeEventListener('mousedown', refreshActivity);
-        window.removeEventListener('scroll', refreshActivity);
+        window.removeEventListener('mousemove', handler);
+        window.removeEventListener('keydown', handler);
+        window.removeEventListener('mousedown', handler);
     };
-  }, [checkUserStatus, disconnectWebSocket, refreshActivity]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // INTENTIONALLY empty — listeners must never be re-registered
 
   // Periodic HTTP polling fallback for liveStatuses (admin/manager only)
   // This catches any status changes that WebSocket events may have missed
   useEffect(() => {
     if (!user || (user.role !== 'admin' && user.role !== 'manager')) return;
-    const interval = setInterval(() => fetchInitialStatuses(user.role), 5000); // 5s fast fallback
+    const interval = setInterval(() => fetchInitialStatuses(user.role), 3000); // 3s fast fallback
     return () => clearInterval(interval);
   }, [user, fetchInitialStatuses]);
 
@@ -472,7 +456,6 @@ export const AuthProvider = ({ children }) => {
     const checkTimeout = () => {
       // REQUIREMENT: Working status must keep session active
       if (status === 'working') {
-        lastActivityRef.current = Date.now();
         if (showWarning) setShowWarning(false);
         return;
       }
@@ -499,37 +482,91 @@ export const AuthProvider = ({ children }) => {
     return () => clearInterval(interval);
   }, [user, policy, logout, status, showWarning]);
 
-  // Reset activity timestamp when status becomes 'working' to give employee a fresh grace period
-  // NOTE: The liveStatuses mirror that was previously here has been REMOVED.
-  // It was a circular dependency: status change → liveStatuses write → potential re-render loop.
-  // liveStatuses is now updated ONLY by: (1) WS onmessage handler, (2) setStatus('action'),
-  // (3) fetchInitialStatuses HTTP poll (when no WS lock is active).
+  // Keep statusRef and idleGracePeriodRef in sync with status state.
+  // IMPORTANT: Do NOT reset lastActivityRef here — this effect fires on every WS heartbeat
+  // that broadcasts 'working', which would silently restart the idle countdown every ~15s
+  // and make it impossible to ever detect idle. lastActivityRef is managed exclusively by:
+  //   1. refreshActivityRef (physical mouse/keyboard events)
+  //   2. tick() when idle explicitly ends due to user activity
   useEffect(() => {
+    statusRef.current = status;
     if (status === 'working') {
-        lastActivityRef.current = Date.now();
+        idleGracePeriodRef.current = 0; // Safe: just clears the grace period
     }
   }, [status]);
 
-  // GLOBAL AUTO-IDLE DETECTOR (FOR EMPLOYEES)
   useEffect(() => {
-    if (!user || user.role === 'admin' || status === 'offline' || status === 'on_break') return;
+    const minutes = policy?.idle_threshold_minutes;
+    if (minutes) {
+        idleThresholdMsRef.current = minutes * 60 * 1000;
+        console.log(`[IdleTracker] Policy loaded: idle threshold = ${minutes} min (${minutes * 60}s)`);
+    }
+  }, [policy]);
 
-    const watchIdle = () => {
-        // DO NOT RUN IDLE DETECTION IF SCREEN IS MISSING (waiting for resume screen share)
+  // GLOBAL AUTO-IDLE DETECTOR
+  // Single interval registered ONCE on mount (depends only on [user]).
+  // All live values read via refs so the interval is NEVER restarted by policy/status changes.
+  useEffect(() => {
+    if (!user) return;
+
+    let isRunning = false;
+
+    const tick = async () => {
+        if (isRunning) return;
+
+        const st = statusRef.current;
+        if (st !== 'working' && st !== 'idle') return;
         if (window.rems_screen_missing) return;
 
-        const thresholdSeconds = getIdleThreshold();
         const inactiveMs = Date.now() - lastActivityRef.current;
-        if (status === 'working' && inactiveMs > thresholdSeconds * 1000) {
-            handleIdleDetection('start');
-        } else if (status === 'idle' && inactiveMs < 500) { // Resume instantly on activity
-            handleIdleDetection('stop');
+        const thresholdMs = idleThresholdMsRef.current;
+
+        if (st === 'working' && inactiveMs > thresholdMs) {
+            // ── EMPLOYEE WENT IDLE ─────────────────────────────────
+            isRunning = true;
+            statusRef.current = 'idle'; // Synchronous — prevents next tick from re-triggering
+            idleGracePeriodRef.current = Date.now() + 5000; // 5s grace: ignore DOM reflow events
+            try {
+                console.log('[IdleTracker] ▶ IDLE (inactive', Math.round(inactiveMs/1000), 's, threshold', Math.round(thresholdMs/1000), 's)');
+                setStatus('idle');
+                window.dispatchEvent(new CustomEvent('statusChange', { detail: 'idle' }));
+                const retroStart = new Date(Date.now() - thresholdMs).toISOString();
+                await api.post('/sessions/idle/', { action: 'start', start_time: retroStart });
+                console.log('[IdleTracker] ✔ Idle recorded on backend + notifications sent');
+            } catch (err) {
+                console.error('[IdleTracker] ✖ start_idle failed:', err.response?.data || err.message);
+                statusRef.current = 'working';
+                setStatus('working');
+                idleGracePeriodRef.current = 0;
+            } finally {
+                isRunning = false;
+            }
+
+        } else if (st === 'idle' && inactiveMs < 2000 && Date.now() > idleGracePeriodRef.current) {
+            // ── EMPLOYEE RETURNED (mouse/keyboard activity detected) ─
+            if (window.rems_screen_missing) return;
+            isRunning = true;
+            statusRef.current = 'working';
+            lastActivityRef.current = Date.now(); // Reset ONLY here — user physically acted
+            try {
+                console.log('[IdleTracker] ▶ WORKING (activity detected after idle)');
+                setStatus('working');
+                window.dispatchEvent(new CustomEvent('statusChange', { detail: 'working' }));
+                await api.post('/sessions/idle/', { action: 'stop' });
+                console.log('[IdleTracker] ✔ Idle stopped on backend');
+            } catch (err) {
+                console.error('[IdleTracker] ✖ stop_idle failed:', err.response?.data || err.message);
+            } finally {
+                isRunning = false;
+            }
         }
     };
 
-    const interval = setInterval(watchIdle, 1000);
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [user, status, handleIdleDetection]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]); // ONLY user — all other values read via refs, no restarts on policy/status change
+
 
   // Global Shift Window Watcher
   useEffect(() => {
@@ -587,7 +624,7 @@ export const AuthProvider = ({ children }) => {
     status,
     setStatus,
     policy,
-    refreshActivity,
+    refreshActivity: (e) => refreshActivityRef.current(e),
     login,
     logout,
     notifications,
@@ -615,6 +652,15 @@ export const AuthProvider = ({ children }) => {
       } catch (err) {
         console.error(err);
       }
+    },
+    bulkDeleteNotifications: async (ids) => {
+      try {
+        await api.post('/notifications/bulk_delete/', { ids });
+        setNotifications((prev) => prev.filter((n) => !ids.includes(n.id)));
+        ids.forEach(id => toast.dismiss(id));
+      } catch (err) {
+        console.error(err);
+      }
     }
   };
 
@@ -623,7 +669,7 @@ export const AuthProvider = ({ children }) => {
       {!loading && children}
       <SessionWarningModal 
         isOpen={showWarning}
-        onStay={refreshActivity}
+        onStay={() => refreshActivityRef.current()}
         onLogout={logout}
         timeLeft={warningTimeLeft}
       />

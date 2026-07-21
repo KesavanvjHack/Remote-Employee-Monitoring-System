@@ -169,7 +169,28 @@ const TeamAttendance = () => {
   };
 
   const uniqueEmployees = Array.from(new Set(attendance.map(a => a.user_name))).filter(Boolean).sort();
-  const filteredAttendance = attendance.filter(record => new Date(record.date) <= new Date());
+  const filteredAttendance = attendance.filter(record => {
+    // 1. Basic safety check
+    if (new Date(record.date) > new Date()) return false;
+    
+    // 2. Apply Date Range Filter
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      const recordDate = new Date(record.date);
+      if (recordDate < start || recordDate > end) return false;
+    }
+
+    // 3. Apply Employee Filter
+    if (exportEmployee !== 'all' && record.user_name !== exportEmployee) {
+      return false;
+    }
+
+    return true;
+  });
+
   const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(filteredAttendance, 15);
 
   if (loading) return (

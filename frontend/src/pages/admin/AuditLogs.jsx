@@ -123,8 +123,20 @@ const AuditLogs = () => {
 
   // Loading skeletons for a premium feel
   const filteredLogs = logs.filter(log => {
+    // 1. Date Filter (using the top page date filter)
     const logDate = new Date(log.timestamp).toLocaleDateString('en-CA');
-    return logDate >= startDate && logDate <= endDate;
+    if (startDate && endDate) {
+        if (logDate < startDate || logDate > endDate) return false;
+    }
+    
+    // 2. Sync with Export Category filter
+    if (exportCategory === 'particular_employee' && exportUserId) {
+        if (String(log.user) !== String(exportUserId)) return false;
+    }
+    
+    // (If other categories like 'system', we'd filter them here, but the backend /export/ currently only handles user_id for 'particular_employee')
+    
+    return true;
   });
 
   const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(filteredLogs, 30);
@@ -337,7 +349,7 @@ const AuditLogs = () => {
             {filteredLogs.length === 0 && (
               <tr>
                 <td colSpan="5" className="px-6 py-8 text-center text-slate-500">
-                  {filter === 'today' ? "No audit logs recorded for today" : "No audit logs recorded"}
+                  {dateFilter === 'today' ? "No audit logs recorded for today" : "No audit logs recorded"}
                 </td>
               </tr>
             )}

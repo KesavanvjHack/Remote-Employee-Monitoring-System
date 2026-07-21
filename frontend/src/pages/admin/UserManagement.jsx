@@ -196,8 +196,27 @@ const UserManagement = () => {
     toast.success('Users exported successfully!');
   };
 
-  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(users, 20);
+  const filteredUsers = Object.values(users).filter(u => {
+    // Filter by role
+    if (exportRole !== 'all' && u.role !== exportRole) {
+      return false;
+    }
+    
+    // Filter by date
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      if (u.date_joined) {
+        const d = new Date(u.date_joined);
+        if (d < start || d > end) return false;
+      }
+    }
+    return true;
+  });
 
+  const { currentData, currentPage, totalPages, goToPage, nextPage, prevPage } = usePagination(filteredUsers, 20);
   if (loading) return <div className="text-indigo-400 p-8 text-center animate-pulse">Loading Users...</div>;
 
   return (

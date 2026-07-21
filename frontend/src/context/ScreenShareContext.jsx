@@ -50,7 +50,7 @@ export const ScreenShareProvider = ({ children }) => {
     // Restore session on mount
     useEffect(() => {
         const restoreSession = async () => {
-            if (user?.role !== 'admin' && !isSharing) {
+            if (user && user.role !== 'admin' && !isSharing) {
                 try {
                     const resp = await monitoringAPI.getCurrentSession();
                     if (resp.data && resp.data.is_active) {

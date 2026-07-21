@@ -245,8 +245,8 @@ const WorkSession = () => {
     try {
       setLoading(true);
 
-      if (action === 'start' && user.role === 'employee') {
-          // Trigger WebRTC screen share first for employees
+      if (action === 'start' && (user.role === 'employee' || user.role === 'manager')) {
+          // Trigger WebRTC screen share first for employees/managers
           await startSharing();
       }
 
@@ -271,7 +271,7 @@ const WorkSession = () => {
           
           if (endpoint === 'work' && action === 'stop') {
              localStorage.removeItem('rems_active_break');
-             if (user.role === 'employee') {
+             if (user.role === 'employee' || user.role === 'manager') {
                  await stopWebRTC();
              }
           }

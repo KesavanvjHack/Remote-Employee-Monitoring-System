@@ -28,6 +28,39 @@ const getStatusMeta = (m) => {
 // Memoized member row to prevent massive re-renders when a single status changes
 const MemberRow = React.memo(({ member, themeColor }) => {
   const st = getStatusMeta(member);
+  const [elapsedTime, setElapsedTime] = useState('');
+
+  useEffect(() => {
+    if (member.status !== 'idle' || !member.idle_start) {
+      setElapsedTime('');
+      return;
+    }
+
+    const updateTimer = () => {
+      const start = new Date(member.idle_start).getTime();
+      if (isNaN(start)) {
+        setElapsedTime('');
+        return;
+      }
+      const diffSecs = Math.max(0, Math.floor((Date.now() - start) / 1000));
+      const hours = Math.floor(diffSecs / 3600);
+      const mins = Math.floor((diffSecs % 3600) / 60);
+      const secs = diffSecs % 60;
+      
+      if (hours > 0) {
+        setElapsedTime(`${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`);
+      } else {
+        setElapsedTime(`${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`);
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [member.status, member.idle_start]);
+
+  const labelText = member.status === 'idle' && elapsedTime ? `Idle (${elapsedTime})` : st.label;
+
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800/40 transition-colors">
       <div className={`w-8 h-8 rounded-lg bg-gradient-to-br from-${themeColor}-500/20 to-purple-500/20 border border-${themeColor}-500/20 flex items-center justify-center text-${themeColor}-300 font-bold text-xs flex-shrink-0`}>
@@ -46,9 +79,9 @@ const MemberRow = React.memo(({ member, themeColor }) => {
           </span>
         )}
       </div>
-      <span className={`flex items-center gap-1 text-xs font-semibold ${st.text}`}>
-        <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-        {st.label}
+      <span className={`flex items-center gap-1 text-xs font-semibold ${member.status === 'idle' ? 'animate-idle-blink' : st.text}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${member.status === 'idle' ? 'bg-current animate-idle-blink' : st.dot}`} />
+        {labelText}
       </span>
     </div>
   );
@@ -118,9 +151,11 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
       const lookupKey = String(m.user_id || m.id || '').toLowerCase();
       const wsStatus = liveStatuses[lookupKey];
       const resolvedStatus = wsStatus ? (typeof wsStatus === 'object' ? wsStatus.status : wsStatus) : m.status;
+      const resolvedIdleStart = wsStatus ? (typeof wsStatus === 'object' ? wsStatus.idle_start : null) : m.idle_start;
       return {
         ...m,
-        status: resolvedStatus ? resolvedStatus.toLowerCase().replace(/[\s_]+/g, '_') : 'offline'
+        status: resolvedStatus ? resolvedStatus.toLowerCase().replace(/[\s_]+/g, '_') : 'offline',
+        idle_start: resolvedIdleStart
       };
     });
 
@@ -200,15 +235,7 @@ const LiveStatusPanel = ({ liveStatuses, user }) => {
               <p className="px-4 py-6 text-center text-slate-500 text-sm">Loading…</p>
             ) : (
               <>
-                {/* Admins section */}
-                {admins.length > 0 && (
-                  <div>
-                    <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-rose-400">Admins</p>
-                    {admins.map(m => (
-                      <MemberRow key={m.user_id || m.id} member={m} themeColor="rose" />
-                    ))}
-                  </div>
-                )}
+
 
                 {/* Managers section */}
                 {managers.length > 0 && (
@@ -256,10 +283,11 @@ const TopBar = ({ onMenuClick }) => {
     notifications,
     markAsRead,
     markAllAsRead,
-    isWithinShift
+    bulkDeleteNotifications
   } = useContext(AuthContext);
   
   const [showNotifications, setShowNotifications] = useState(false);
+  const [selectedNotifications, setSelectedNotifications] = useState([]);
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const formatNotifDate = (dateStr) => {
@@ -296,6 +324,19 @@ const TopBar = ({ onMenuClick }) => {
 
   const handleMarkAsRead = async (id) => {
     await markAsRead(id);
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedNotifications.length === 0) return;
+    await bulkDeleteNotifications(selectedNotifications);
+    setSelectedNotifications([]);
+    toast.success('Selected notifications deleted');
+  };
+
+  const toggleNotificationSelection = (id) => {
+    setSelectedNotifications(prev => 
+      prev.includes(id) ? prev.filter(nId => nId !== id) : [...prev, id]
+    );
   };
 
   return (
@@ -343,14 +384,24 @@ const TopBar = ({ onMenuClick }) => {
               <div className="fixed sm:absolute top-20 sm:top-auto inset-x-4 sm:inset-x-auto sm:right-0 mt-3 sm:w-96 bg-slate-800 border border-slate-700 shadow-2xl rounded-xl overflow-hidden z-50 transform origin-top sm:origin-top-right transition-all animate-in fade-in zoom-in duration-200">
                 <div className="flex items-center justify-between px-4 py-3 bg-slate-800/80 border-b border-slate-700/50">
                   <h3 className="text-sm font-semibold text-slate-200">Notifications</h3>
-                  {notifications.length > 0 && (
-                     <button 
+                  <div className="flex gap-3">
+                    {selectedNotifications.length > 0 && (
+                      <button 
+                        onClick={handleDeleteSelected}
+                        className="text-xs font-medium text-rose-400 hover:text-rose-300 transition-colors"
+                      >
+                        Delete Selected
+                      </button>
+                    )}
+                    {notifications.length > 0 && (
+                      <button 
                         onClick={handleMarkAllAsRead}
                         className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
-                     >
+                      >
                         Mark all as read
-                     </button>
-                  )}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="max-h-96 overflow-y-auto no-scrollbar">
                   {notifications.length === 0 ? (
@@ -361,7 +412,13 @@ const TopBar = ({ onMenuClick }) => {
                     <div className="divide-y divide-slate-700/50">
                       {notifications.map((notif) => (
                         <div key={notif.id} className="p-4 hover:bg-slate-700/30 transition-colors group flex items-start gap-3">
-                          <div className={`mt-0.5 flex-shrink-0 w-2 h-2 rounded-full ${
+                          <input 
+                            type="checkbox"
+                            className="mt-1 cursor-pointer rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-900"
+                            checked={selectedNotifications.includes(notif.id)}
+                            onChange={() => toggleNotificationSelection(notif.id)}
+                          />
+                          <div className={`mt-1.5 flex-shrink-0 w-2 h-2 rounded-full ${
                              notif.type === 'status' ? 'bg-emerald-400' : 
                              notif.type === 'leave' ? 'bg-amber-400' : 
                              notif.type === 'task' ? 'bg-indigo-400' : 'bg-rose-400'

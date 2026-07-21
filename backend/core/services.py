@@ -217,16 +217,41 @@ def get_user_policy(user):
     """
     Get the active attendance policy for a user's department,
     falling back to the global active policy.
+    When multiple policies match, the most recently updated one wins.
     """
     from core.models import AttendancePolicy
+    from django.core.cache import cache
+
+    # 1. Instance-level caching (fastest, prevents N+1 within same request/queryset)
+    if user and hasattr(user, '_cached_policy'):
+        return user._cached_policy
+
+    # Determine cache key
     if not user:
-        return AttendancePolicy.objects.filter(is_active=True, department__isnull=True).first()
+        cache_key = 'policy_global'
+    else:
+        dept_id = str(user.department_id) if hasattr(user, 'department_id') and user.department_id else 'none'
+        cache_key = f'policy_dept_{dept_id}'
+
+    # 2. Django cache (prevents DB hits across different requests)
+    policy = cache.get(cache_key)
+    if policy is not None:
+        if user:
+            user._cached_policy = policy
+        return policy
+
+    # 3. Database lookup (Fallback)
+    if user and hasattr(user, 'department') and user.department:
+        policy = AttendancePolicy.objects.filter(is_active=True, department=user.department).order_by('-updated_at').first()
     
-    policy = None
-    if hasattr(user, 'department') and user.department:
-        policy = AttendancePolicy.objects.filter(is_active=True, department=user.department).first()
     if not policy:
-        policy = AttendancePolicy.objects.filter(is_active=True, department__isnull=True).first()
+        policy = AttendancePolicy.objects.filter(is_active=True, department__isnull=True).order_by('-updated_at').first()
+    
+    # Save to caches
+    cache.set(cache_key, policy, 3600)  # 1 hour
+    if user:
+        user._cached_policy = policy
+
     return policy
 
 
@@ -327,86 +352,81 @@ class AttendanceService:
         def sum_intervals(intervals):
             return sum((end - start).total_seconds() for start, end in intervals)
 
-        # 1. Total Work Intervals (Union of all work sessions)
-        work_intervals = merge_intervals([(s.start_time, s.end_time or now) for s in sessions if (s.end_time or now) > s.start_time])
-        total_work = int(sum_intervals(work_intervals))
-
-        # 2. Total Break Intervals (Union of all breaks, intersected with work)
-        all_breaks = []
-        for s in sessions:
-            ws_start, ws_end = s.start_time, s.end_time or now
-            for b in s.break_sessions.all():
-                bs_start, bs_end = b.start_time, b.end_time or now
-                # Intersection with work session
-                eff_start = max(bs_start, ws_start)
-                eff_end = min(bs_end, ws_end)
-                if eff_end > eff_start:
-                    all_breaks.append((eff_start, eff_end))
-        total_break = int(sum_intervals(merge_intervals(all_breaks)))
-
-        # 3. Total Idle Intervals (Union of all idles, intersected with work)
-        all_idles = []
-        for s in sessions:
-            ws_start, ws_end = s.start_time, s.end_time or now
-            for i in s.idle_logs.all():
-                il_start, il_end = i.start_time, i.end_time or now
-                # Intersection with work session
-                eff_start = max(il_start, ws_start)
-                eff_end = min(il_end, ws_end)
-                if eff_end > eff_start:
-                    all_idles.append((eff_start, eff_end))
-        total_idle = int(sum_intervals(merge_intervals(all_idles)))
-
-        # 4. OVERLAP PROTECTION: Unified Unproductive Duration
-        # Merge breaks and idles into a single union to prevent double-subtracting overlapping time
-        unproductive_union = merge_intervals(all_breaks + all_idles)
-        total_unproductive_seconds = int(sum_intervals(unproductive_union))
-
-        # 5. Net Arithmetic Accuracy (Gross Perspective)
-        net_work_seconds = max(0, total_work - total_unproductive_seconds)
-        
-        # 6. Shift Window Policy (Strictness Integration)
+        # 6. Shift Window Policy
         try:
             policy = get_user_policy(attendance.user)
             present_hours = float(policy.present_hours) if policy else 8.0
             min_hours = float(policy.min_working_hours) if policy else 8.0
             half_day_hours = float(policy.half_day_hours) if policy else 4.0
             idle_threshold_minutes = policy.idle_threshold_minutes if policy else 15
-            
-            # 6a. Define Shift Window for the specific attendance date
+
+            # Define Shift Window for the specific attendance date
             att_date = attendance.date
             tz = timezone.get_current_timezone()
             s_time, e_time = get_user_shift_times(attendance.user, policy)
             shift_start_dt = timezone.make_aware(datetime.combine(att_date, s_time), tz)
-            shift_end_dt = timezone.make_aware(datetime.combine(att_date, e_time), tz)
-            if shift_end_dt <= shift_start_dt: shift_end_dt += timedelta(days=1)
+            shift_end_dt   = timezone.make_aware(datetime.combine(att_date, e_time), tz)
+            if shift_end_dt <= shift_start_dt:
+                shift_end_dt += timedelta(days=1)  # Overnight shift
         except Exception:
             policy = None
             present_hours, min_hours, half_day_hours, idle_threshold_minutes = 8.0, 8.0, 4.0, 15
             shift_start_dt = shift_end_dt = None
 
-        # 7. Shift Intersection Math (Official Attendance Grade)
-        shift_work_seconds = 0
-        net_shift_work_seconds = 0
-        if shift_start_dt and shift_end_dt:
-            # Shift Work Union
-            for start, end in work_intervals:
-                win_start = max(start, shift_start_dt)
-                win_end = min(end, shift_end_dt)
-                if win_end > win_start:
-                    shift_work_seconds += (win_end - win_start).total_seconds()
-            
-            # Unproductive Intersection within Shift
-            shift_unproductive_seconds = 0
-            for start, end in unproductive_union:
-                win_start = max(start, shift_start_dt)
-                win_end = min(end, shift_end_dt)
-                if win_end > win_start:
-                    shift_unproductive_seconds += (win_end - win_start).total_seconds()
-            
-            net_shift_work_seconds = max(0, shift_work_seconds - shift_unproductive_seconds)
-        else:
-            net_shift_work_seconds = net_work_seconds
+        def clip_to_shift(start, end):
+            """Clip an interval to the shift window. Returns (None, None) if outside."""
+            if not shift_start_dt or not shift_end_dt:
+                return start, end
+            cs = max(start, shift_start_dt)
+            ce = min(end, shift_end_dt)
+            if ce <= cs:
+                return None, None
+            return cs, ce
+
+        # 1. Shift-clipped Work Intervals
+        work_intervals_raw = [(s.start_time, s.end_time or now) for s in sessions if (s.end_time or now) > s.start_time]
+        work_intervals = []
+        for s, e in work_intervals_raw:
+            cs, ce = clip_to_shift(s, e)
+            if cs is not None:
+                work_intervals.append((cs, ce))
+        work_intervals = merge_intervals(work_intervals)
+        total_work = int(sum_intervals(work_intervals))
+
+        # 2. Shift-clipped Break Intervals (intersected with work)
+        all_breaks = []
+        for s in sessions:
+            ws_s, ws_e = clip_to_shift(s.start_time, s.end_time or now)
+            if ws_s is None:
+                continue
+            for b in s.break_sessions.all():
+                eff_start = max(b.start_time, ws_s)
+                eff_end   = min(b.end_time or now, ws_e)
+                if eff_end > eff_start:
+                    all_breaks.append((eff_start, eff_end))
+        total_break = int(sum_intervals(merge_intervals(all_breaks)))
+
+        # 3. Shift-clipped Idle Intervals (intersected with work)
+        all_idles = []
+        for s in sessions:
+            ws_s, ws_e = clip_to_shift(s.start_time, s.end_time or now)
+            if ws_s is None:
+                continue
+            for i in s.idle_logs.all():
+                il_start, il_end = i.start_time, i.end_time or now
+                eff_start = max(il_start, ws_s)
+                eff_end   = min(il_end, ws_e)
+                if eff_end > eff_start:
+                    all_idles.append((eff_start, eff_end))
+        total_idle = int(sum_intervals(merge_intervals(all_idles)))
+
+        # 4. Unified Unproductive (to avoid double-counting breaks + idles)
+        unproductive_union = merge_intervals(all_breaks + all_idles)
+        total_unproductive_seconds = int(sum_intervals(unproductive_union))
+
+        # 5. Net shift work = work − unproductive (all already shift-clipped)
+        net_work_seconds = max(0, total_work - total_unproductive_seconds)
+        net_shift_work_seconds = net_work_seconds  # same: already shift-clipped
 
         # 8. Status Determination (Based on Shift-Aware Net Hours)
         total_work_hours = net_shift_work_seconds / 3600
@@ -779,34 +799,20 @@ class IdleService:
         from .models import WorkSession, IdleLog, AttendancePolicy
         import datetime
 
-        # 1. Enforce shift hours (Idle detection only during shift)
         policy = get_user_policy(user)
-        s_time, e_time = get_user_shift_times(user, policy)
-        now_local = timezone.localtime(timezone.now())
-        
-        # Handle overnight shifts
-        if s_time <= e_time:
-            within = s_time <= now_local.time() <= e_time
-        else:
-            within = now_local.time() >= s_time or now_local.time() <= e_time
-            
-        if not within:
-            # Outside shift hours — ignore idle detection request
-            return None, False
-
-        attendance, _ = AttendanceService.get_or_create_today(user)
+        # Find open session across any attendance day (supports overnight shifts)
         open_session = WorkSession.objects.filter(
-            attendance=attendance,
+            attendance__user=user,
             end_time__isnull=True
         ).first()
 
         if not open_session:
-            return None, False
+            return None, "No active work session."
 
         # Prevent idle during an active break
         on_break = open_session.break_sessions.filter(end_time__isnull=True).exists()
         if on_break:
-            return None, False
+            return None, "Cannot start idle during an active break."
 
         existing_idle = open_session.idle_logs.select_for_update().filter(end_time__isnull=True).first()
         if existing_idle:
@@ -832,6 +838,7 @@ class IdleService:
             title = "Screen Disconnected"
             msg = f"{user.full_name} is now Idle (Screen share disconnected after refresh)."
         else:
+            policy = get_user_policy(user)
             threshold_msg = f"after {policy.idle_threshold_minutes} minutes" if policy else "after threshold"
             title = "Idle Detected"
             msg = f"{user.full_name} is now Idle ({threshold_msg} of inactivity)."
@@ -850,22 +857,22 @@ class IdleService:
         """Resume from idle. Called when user moves mouse/types."""
         from .models import WorkSession
 
-        attendance, _ = AttendanceService.get_or_create_today(user)
+        # Find open session across any attendance day (supports overnight shifts)
         open_session = WorkSession.objects.filter(
-            attendance=attendance,
+            attendance__user=user,
             end_time__isnull=True
         ).first()
 
         if not open_session:
-            return None, False
+            return None, "No active work session to stop idle."
 
         open_idle = open_session.idle_logs.select_for_update().filter(end_time__isnull=True).first()
         if not open_idle:
-            return None, False
+            return None, "No active idle period found."
 
         open_idle.end_time = timezone.now()
         open_idle.save(update_fields=['end_time', 'updated_at'])
-        AttendanceService.recalculate_status(attendance)
+        AttendanceService.recalculate_status(open_session.attendance)
         StatusService.broadcast_status_change(user)
         NotificationService.notify_shift_event(
             user, "Back to Work", f"{user.full_name} has returned to work.", "status"
@@ -884,11 +891,12 @@ class StatusService:
         cache.set(f'presence_{str(user_id)}', True, 35)
 
     @staticmethod
-    def broadcast_status_change(user):
+    def broadcast_status_change(user, is_logout=False):
         """Helper to push the current status of a user over Django Channels."""
         try:
             # If we are broadcasting because of a user action, ensure presence is active
-            StatusService.touch_presence(user.id)
+            if not is_logout:
+                StatusService.touch_presence(user.id)
             
             channel_layer = get_channel_layer()
             status_data = StatusService.get_user_status(user)
@@ -898,7 +906,8 @@ class StatusService:
                     {
                         'type': 'status_update',
                         'user_id': str(user.id),
-                        'status': status_data['status']
+                        'status': status_data['status'],
+                        'idle_start': status_data.get('idle_start')
                     }
                 )
         except Exception as e:
@@ -969,12 +978,6 @@ class StatusService:
         statuses = {}
         for user in users:
             u_id_str = str(user.id)
-            if user.role == 'admin':
-                status_data = {'status': 'working', 'attendance': None, 'session': None}
-                statuses[user.id] = status_data
-                statuses[u_id_str] = status_data
-                continue
-
             # Prioritize presence: If not online, they are offline
             is_online = cached_presence.get(f'presence_{u_id_str}')
             if not is_online:
@@ -1002,7 +1005,12 @@ class StatusService:
                 # Check idle
                 oi = idle_map.get(str(session.id))
                 if oi:
-                    status_data = {'status': 'idle', 'attendance': att, 'session': session}
+                    status_data = {
+                        'status': 'idle',
+                        'attendance': att,
+                        'session': session,
+                        'idle_start': oi.start_time.isoformat() if oi.start_time else None
+                    }
                     statuses[user.id] = status_data
                     statuses[u_id_str] = status_data
                     continue
@@ -1024,13 +1032,11 @@ class StatusService:
         """
         Return real-time status: online/working/idle/on_break/offline
         """
-        from .models import WorkSession, Attendance
+        from .models import WorkSession, BreakSession, IdleLog
+        from django.db.models import Prefetch
         from django.core.cache import cache
 
-        if user.role == 'admin':
-            return {'status': 'working', 'attendance': None, 'session': None}
-
-        # Check presence first: If not online, they are offline
+        # Check online presence first
         is_online = cache.get(f'presence_{user.id}')
         if not is_online:
             today = date.today()
@@ -1038,22 +1044,31 @@ class StatusService:
             return {'status': 'offline', 'attendance': attendance, 'session': None}
 
         # 1. Look for any active/open session first to support overnight shifts
+        # Use Prefetch to load active breaks and idle logs in the exact same query roundtrip
         open_session = WorkSession.objects.filter(
             attendance__user=user,
             end_time__isnull=True
-        ).select_related('attendance').first()
+        ).select_related('attendance').prefetch_related(
+            Prefetch('break_sessions', queryset=BreakSession.objects.filter(end_time__isnull=True), to_attr='active_breaks'),
+            Prefetch('idle_logs', queryset=IdleLog.objects.filter(end_time__isnull=True), to_attr='active_idles')
+        ).first()
 
         if open_session:
             attendance = open_session.attendance
+            
             # Check break (Prioritized over idle)
-            open_break = open_session.break_sessions.filter(end_time__isnull=True).first()
-            if open_break:
+            if open_session.active_breaks:
                 return {'status': 'on_break', 'attendance': attendance, 'session': open_session}
 
             # Check idle
-            open_idle = open_session.idle_logs.filter(end_time__isnull=True).first()
-            if open_idle:
-                return {'status': 'idle', 'attendance': attendance, 'session': open_session}
+            if open_session.active_idles:
+                open_idle = open_session.active_idles[0]
+                return {
+                    'status': 'idle',
+                    'attendance': attendance,
+                    'session': open_session,
+                    'idle_start': open_idle.start_time.isoformat() if open_idle.start_time else None
+                }
 
             return {'status': 'working', 'attendance': attendance, 'session': open_session}
 

@@ -117,10 +117,11 @@ html {
   scroll-behavior: smooth;
 }
 
-main, .overflow-y-auto, .overflow-auto {
+main, .overflow-y-auto, .overflow-auto, .table-container, [data-scrollable="true"] {
   -webkit-overflow-scrolling: touch;
   scroll-anchoring: auto;
   will-change: scroll-position;
+  scroll-behavior: smooth;
 }
 
 /* Custom scrollbar for dark theme */
@@ -137,3 +138,20 @@ main, .overflow-y-auto, .overflow-auto {
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-slate-500;
 }
+
+@keyframes idle-blink {
+  0%, 100% {
+    color: #fbbf24;
+  }
+  33% {
+    color: #ef4444;
+  }
+  66% {
+    color: #f97316;
+  }
+}
+
+.animate-idle-blink {
+  animation: idle-blink 1.5s infinite;
+}
+

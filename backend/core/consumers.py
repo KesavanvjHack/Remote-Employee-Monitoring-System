@@ -43,12 +43,12 @@ class StatusConsumer(AsyncWebsocketConsumer):
 
     async def delayed_offline_check(self, user_id):
         import asyncio
-        # Wait 6 seconds to allow for page reloads / short network flickers
-        await asyncio.sleep(6)
+        # Wait 1.5 seconds to allow for page reloads / short network flickers
+        await asyncio.sleep(1.5)
         still_empty = await self.check_channels_empty(user_id)
         if still_empty:
             await self.set_presence_offline(user_id)
-            await self.trigger_status_broadcast(user_id)
+            await self.trigger_status_broadcast(user_id, is_logout=True)
 
     @database_sync_to_async
     def check_channels_empty(self, user_id):
@@ -129,12 +129,12 @@ class StatusConsumer(AsyncWebsocketConsumer):
         """Remove presence key — user is now considered offline."""
         cache.delete(f'presence_{str(user_id)}')
 
-    async def trigger_status_broadcast(self, user_id):
+    async def trigger_status_broadcast(self, user_id, is_logout=False):
         from .models import User
         from .services import StatusService
         try:
             user = await database_sync_to_async(User.objects.get)(id=user_id)
-            await database_sync_to_async(StatusService.broadcast_status_change)(user)
+            await database_sync_to_async(StatusService.broadcast_status_change)(user, is_logout=is_logout)
         except Exception:
             pass
 
@@ -145,6 +145,7 @@ class StatusConsumer(AsyncWebsocketConsumer):
             'type': 'status_update',
             'user_id': event['user_id'],
             'status': event['status'],
+            'idle_start': event.get('idle_start'),
         }))
 
     async def notification_alert(self, event):

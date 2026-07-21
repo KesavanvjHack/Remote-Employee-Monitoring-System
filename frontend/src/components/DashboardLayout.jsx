@@ -38,7 +38,7 @@ const DashboardLayout = ({ children }) => {
   const { status, setStatus } = useContext(AuthContext);
 
   useEffect(() => {
-    if (!user || user.role === 'admin' || status === 'offline' || status === 'on_break') return;
+    if (!user || user.role !== 'employee' || status === 'offline' || status === 'on_break') return;
 
     // If working/idle but screen sharing is NOT active (e.g. after refresh)
     // We force the backend to 'Idle' state to pause work hour calculation

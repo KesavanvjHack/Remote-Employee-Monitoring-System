@@ -247,59 +247,133 @@ class AttendanceSerializer(serializers.ModelSerializer):
     def sum_intervals(self, intervals):
         return sum((end - start).total_seconds() for start, end in intervals)
 
+    def _get_shift_window(self, obj):
+        """
+        Returns (shift_start_dt, shift_end_dt) aware datetimes for the attendance date.
+        For overnight shifts (e.g. 9:30 PM → 5:30 AM) shift_end_dt will be the next calendar day.
+        Returns (None, None) if policy is unavailable.
+        """
+        import datetime
+        from django.utils import timezone as tz_utils
+        from core.services import get_user_policy, get_user_shift_times
+
+        policy = get_user_policy(obj.user)
+        if not policy:
+            return None, None
+
+        s_time, e_time = get_user_shift_times(obj.user, policy)
+        tz = tz_utils.get_current_timezone()
+        att_date = obj.date
+
+        shift_start = tz_utils.make_aware(datetime.datetime.combine(att_date, s_time), tz)
+        shift_end   = tz_utils.make_aware(datetime.datetime.combine(att_date, e_time), tz)
+        if shift_end <= shift_start:
+            shift_end += datetime.timedelta(days=1)  # Overnight shift
+
+        return shift_start, shift_end
+
     def get_gross_seconds(self, obj):
-        """Returns Gross Logged-in Seconds by calculating the Union of all sessions"""
+        """Returns Gross Logged-in Seconds clipped to the shift window."""
         now = timezone.now()
-        intervals = [(s.start_time, s.end_time or now) for s in obj.work_sessions.all() if (s.end_time or now) > s.start_time]
-        return int(self.sum_intervals(self.merge_intervals(intervals)))
+        shift_start, shift_end = self._get_shift_window(obj)
+
+        raw = [(s.start_time, s.end_time or now)
+               for s in obj.work_sessions.all()
+               if (s.end_time or now) > s.start_time]
+
+        if shift_start and shift_end:
+            clipped = []
+            for s, e in raw:
+                cs = max(s, shift_start)
+                ce = min(e, shift_end)
+                if ce > cs:
+                    clipped.append((cs, ce))
+            raw = clipped
+
+        return int(self.sum_intervals(self.merge_intervals(raw)))
 
     def get_total_work_seconds(self, obj):
-        """Returns Net Productive Seconds: Gross - Unproductive Union"""
+        """Returns Net Productive Seconds clipped to shift window: Gross - Unproductive Union."""
         now = timezone.now()
-        gross = self.get_gross_seconds(obj)
-        
+        shift_start, shift_end = self._get_shift_window(obj)
+
         unproductive_intervals = []
+        work_intervals = []
+
         for ws in obj.work_sessions.all():
-            ws_start, ws_end = ws.start_time, ws.end_time or now
+            ws_start = ws.start_time
+            ws_end   = ws.end_time or now
+
+            # Clip work session to shift window
+            if shift_start and shift_end:
+                ws_start = max(ws_start, shift_start)
+                ws_end   = min(ws_end, shift_end)
+                if ws_end <= ws_start:
+                    continue  # Entirely outside shift window
+
+            work_intervals.append((ws_start, ws_end))
+
+            # Breaks clipped to (work ∩ shift)
             for bs in ws.break_sessions.all():
                 eff_start = max(bs.start_time, ws_start)
-                eff_end = min(bs.end_time or now, ws_end)
+                eff_end   = min(bs.end_time or now, ws_end)
                 if eff_end > eff_start:
                     unproductive_intervals.append((eff_start, eff_end))
+
+            # Idles clipped to (work ∩ shift)
             for il in ws.idle_logs.all():
                 eff_start = max(il.start_time, ws_start)
-                eff_end = min(il.end_time or now, ws_end)
+                eff_end   = min(il.end_time or now, ws_end)
                 if eff_end > eff_start:
                     unproductive_intervals.append((eff_start, eff_end))
-                    
+
+        gross = int(self.sum_intervals(self.merge_intervals(work_intervals)))
         total_unproductive = int(self.sum_intervals(self.merge_intervals(unproductive_intervals)))
         return max(0, gross - total_unproductive)
 
     def get_total_break_seconds(self, obj):
-        """Returns total break seconds by summing union of logs intersected with work"""
+        """Returns total break seconds clipped to shift window."""
         now = timezone.now()
+        shift_start, shift_end = self._get_shift_window(obj)
         all_breaks = []
+
         for ws in obj.work_sessions.all():
-            ws_start, ws_end = ws.start_time, ws.end_time or now
+            ws_start = ws.start_time
+            ws_end   = ws.end_time or now
+            if shift_start and shift_end:
+                ws_start = max(ws_start, shift_start)
+                ws_end   = min(ws_end, shift_end)
+                if ws_end <= ws_start:
+                    continue
             for bs in ws.break_sessions.all():
                 eff_start = max(bs.start_time, ws_start)
-                eff_end = min(bs.end_time or now, ws_end)
+                eff_end   = min(bs.end_time or now, ws_end)
                 if eff_end > eff_start:
                     all_breaks.append((eff_start, eff_end))
+
         return int(self.sum_intervals(self.merge_intervals(all_breaks)))
 
     def get_total_idle_seconds(self, obj):
-        """Returns total idle seconds by summing union of logs intersected with work"""
+        """Returns total idle seconds clipped to shift window."""
         now = timezone.now()
+        shift_start, shift_end = self._get_shift_window(obj)
         all_idles = []
+
         for ws in obj.work_sessions.all():
-            ws_start, ws_end = ws.start_time, ws.end_time or now
+            ws_start = ws.start_time
+            ws_end   = ws.end_time or now
+            if shift_start and shift_end:
+                ws_start = max(ws_start, shift_start)
+                ws_end   = min(ws_end, shift_end)
+                if ws_end <= ws_start:
+                    continue
             for il in ws.idle_logs.all():
                 il_start, il_end = il.start_time, il.end_time or now
                 eff_start = max(il_start, ws_start)
-                eff_end = min(il_end, ws_end)
+                eff_end   = min(il_end, ws_end)
                 if eff_end > eff_start:
                     all_idles.append((eff_start, eff_end))
+
         return int(self.sum_intervals(self.merge_intervals(all_idles)))
 
     def get_effective_work_seconds(self, obj):
@@ -317,45 +391,33 @@ class AttendanceSerializer(serializers.ModelSerializer):
         Ensures that 'Gap' reflects the overall daily requirement.
         """
         from core.services import get_user_policy
-        import datetime
-        from django.utils import timezone as django_timezone
-        
         policy = get_user_policy(obj.user)
         if not policy:
             return 0
-            
-        # 1. Shift Window & Policy Goal (Target)
+
+        # Target hours from policy
         target_seconds = float(policy.min_working_hours) * 3600
-        att_date = obj.date 
-        tz = django_timezone.get_current_timezone()
-        from core.services import get_user_shift_times
-        s_time, e_time = get_user_shift_times(obj.user, policy)
-        shift_start = django_timezone.make_aware(datetime.datetime.combine(att_date, s_time), tz)
-        shift_end = django_timezone.make_aware(datetime.datetime.combine(att_date, e_time), tz)
-        
-        if shift_end <= shift_start: 
-            shift_end += datetime.timedelta(days=1)
 
-            
-        # 2. Daily Requirement Progress
-        now = django_timezone.now()
+        # Shift window for this attendance date
+        shift_start, shift_end = self._get_shift_window(obj)
+        if not shift_start or not shift_end:
+            return 0
 
-        # 3. Actual Work (Inside window)
-        sessions = [(s.start_time, s.end_time or now) for s in obj.work_sessions.all() if (s.end_time or now) > s.start_time]
+        now = timezone.now()
+
+        # Work sessions already clipped by get_total_work_seconds logic
+        sessions = []
+        for s in obj.work_sessions.all():
+            s_start = max(s.start_time, shift_start)
+            s_end   = min(s.end_time or now, shift_end)
+            if s_end > s_start:
+                sessions.append((s_start, s_end))
+
         merged_presence = self.merge_intervals(sessions)
-        
-        intersection_duration = 0
-        for start, end in merged_presence:
-            win_start = max(start, shift_start)
-            win_end = min(end, shift_end)
-            if win_end > win_start:
-                intersection_duration += (win_end - win_start).total_seconds()
-                
-        # Gap is calculated as Total Goal - Total Clocked-In Time (which includes work, break, and idle)
-        net_intersection = max(0, intersection_duration)
-        
-        # 4. Final Gap = Total Goal - Work done so far (Minimum 0)
-        return max(0, int(target_seconds - net_intersection))
+        intersection_duration = sum((e - s).total_seconds() for s, e in merged_presence)
+
+        return max(0, int(target_seconds - intersection_duration))
+
 
     def get_live_status(self, obj):
         from django.core.cache import cache
